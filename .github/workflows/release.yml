@@ -137,12 +137,12 @@ jobs:
           (
             cd "$dist_dir"
             shasum -a 256 "$archive" > "$archive.sha256"
+            shasum -a 256 -c "$archive.sha256"
           )
 
           archive_entries="$(tar -tzf "$dist_dir/$archive" | LC_ALL=C sort)"
           expected_entries="$(printf '%s\n' LICENSE gpw2-battery | LC_ALL=C sort)"
           test "$archive_entries" = "$expected_entries"
-          shasum -a 256 -c "$dist_dir/$archive.sha256"
 
       - name: Upload release files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
