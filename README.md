@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="assets/gpw2-battery-logo.png" alt="gpw2-battery logo" width="180">
+  <img src="assets/gpwbat-logo.png" alt="gpwbat logo" width="180">
 </p>
 
-<h1 align="center">gpw2-battery</h1>
+<h1 align="center">gpwbat</h1>
 
 <p align="center">
   <a href="README.md"><kbd>English</kbd></a>
   <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
 </p>
 
-gpw2-battery is a small macOS command-line tool for reading the current battery level and active charging state of a Logitech G Pro Wireless 2 mouse.
+gpwbat is a small macOS command-line tool for reading the current battery level and active charging state of a Logitech G Pro Wireless 2 mouse.
 
 It talks to the mouse through the Logitech HID++ 2.0 vendor interface. It does not need Logitech G HUB, Python, or a background process. The same binary works from Terminal and from Raycast.
 
@@ -30,32 +30,32 @@ Rust is needed to build the project. A prebuilt binary can be used without insta
 cargo build --release
 ~~~
 
-The binary is written to target/release/gpw2-battery.
+The binary is written to target/release/gpwbat.
 
 ## Install with Homebrew
 
 Install the architecture-specific release through the existing tap:
 
 ~~~
-brew install softmaxe/tap/gpw2-battery
-gpw2-battery --version
+brew install softmaxe/tap/gpwbat
+gpwbat --version
 ~~~
 
 Homebrew selects the arm64 package on Apple Silicon and the x86_64 package on Intel. Upgrade or remove it with:
 
 ~~~
-brew upgrade gpw2-battery
-brew uninstall gpw2-battery
+brew upgrade gpwbat
+brew uninstall gpwbat
 ~~~
 
-The formula puts `gpw2-battery` on Homebrew's `bin` directory, so it can be called from Terminal and Raycast.
+The formula puts `gpwbat` on Homebrew's `bin` directory, so it can be called from Terminal and Raycast.
 
 ## Use from Terminal
 
 Run the binary directly from the project:
 
 ~~~
-./target/release/gpw2-battery
+./target/release/gpwbat
 ~~~
 
 Successful output is one line:
@@ -71,7 +71,7 @@ To use the command from any directory, copy the release binary to a directory on
 
 ~~~
 mkdir -p "$HOME/.local/bin"
-cp target/release/gpw2-battery "$HOME/.local/bin/gpw2-battery"
+cp target/release/gpwbat "$HOME/.local/bin/gpwbat"
 ~~~
 
 ## Use from Raycast
@@ -80,18 +80,19 @@ The repository includes raycast/mouse-battery.sh as a Raycast Script Command. Ad
 
 The wrapper looks for the binary in this order:
 
-1. `GPW2_BATTERY_BINARY`
-2. `command -v gpw2-battery`
-3. `/opt/homebrew/bin/gpw2-battery`
-4. `/usr/local/bin/gpw2-battery`
-5. `$HOME/.local/bin/gpw2-battery`
-6. `target/release/gpw2-battery` in this project
-7. `gpw2-battery` in the project directory
+1. `GPWBAT_BINARY`
+2. `GPW2_BATTERY_BINARY` (legacy, for compatibility)
+3. `command -v gpwbat`
+4. `/opt/homebrew/bin/gpwbat`
+5. `/usr/local/bin/gpwbat`
+6. `$HOME/.local/bin/gpwbat`
+7. `target/release/gpwbat` in this project
+8. `gpwbat` in the project directory
 
-Set GPW2_BATTERY_BINARY when the binary lives somewhere else:
+Set GPWBAT_BINARY when the binary lives somewhere else:
 
 ~~~
-export GPW2_BATTERY_BINARY="/path/to/gpw2-battery"
+export GPWBAT_BINARY="/path/to/gpwbat"
 ~~~
 
 The wrapper executes the binary directly. It never runs cargo run.
@@ -112,10 +113,10 @@ Could not initialize HID access or an access error can indicate a macOS permissi
 
 If the mouse has gone to sleep, move it or click a button before retrying. A full battery may report Battery: 100% without (charging) because the mouse is no longer actively charging.
 
-Release binaries are unsigned and are not notarized by Apple. If macOS blocks the binary, first open System Settings, then Privacy & Security, and choose Open Anyway for gpw2-battery. If that does not work, remove quarantine only from the Homebrew-installed formula:
+Release binaries are unsigned and are not notarized by Apple. If macOS blocks the binary, first open System Settings, then Privacy & Security, and choose Open Anyway for gpwbat. If that does not work, remove quarantine only from the Homebrew-installed formula:
 
 ~~~
-xattr -dr com.apple.quarantine "$(brew --prefix gpw2-battery)"
+xattr -dr com.apple.quarantine "$(brew --prefix gpwbat)"
 ~~~
 
 GitHub build provenance attestations identify the workflow and source repository that produced a release asset. They do not replace an Apple Developer ID signature or notarization.

@@ -109,7 +109,7 @@ jobs:
           EXPECTED_ARCH: ${{ matrix.machine_arch }}
         run: |
           set -euo pipefail
-          binary="target/$TARGET/release/gpw2-battery"
+          binary="target/$TARGET/release/gpwbat"
           test -x "$binary"
 
           binary_archs="$(lipo -archs "$binary")"
@@ -124,16 +124,16 @@ jobs:
             exit 1
           }
 
-          test "$("$binary" --version)" = "gpw2-battery $VERSION"
+          test "$("$binary" --version)" = "gpwbat $VERSION"
 
           package_dir="$RUNNER_TEMP/package-$TARGET"
           dist_dir="$RUNNER_TEMP/dist-$TARGET"
           mkdir -p "$package_dir" "$dist_dir"
-          install -m 0755 "$binary" "$package_dir/gpw2-battery"
+          install -m 0755 "$binary" "$package_dir/gpwbat"
           install -m 0644 LICENSE "$package_dir/LICENSE"
 
-          archive="gpw2-battery-v$VERSION-$TARGET.tar.gz"
-          COPYFILE_DISABLE=1 tar -czf "$dist_dir/$archive" -C "$package_dir" gpw2-battery LICENSE
+          archive="gpwbat-v$VERSION-$TARGET.tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "$dist_dir/$archive" -C "$package_dir" gpwbat LICENSE
           (
             cd "$dist_dir"
             shasum -a 256 "$archive" > "$archive.sha256"
@@ -141,7 +141,7 @@ jobs:
           )
 
           archive_entries="$(tar -tzf "$dist_dir/$archive" | LC_ALL=C sort)"
-          expected_entries="$(printf '%s\n' LICENSE gpw2-battery | LC_ALL=C sort)"
+          expected_entries="$(printf '%s\n' LICENSE gpwbat | LC_ALL=C sort)"
           test "$archive_entries" = "$expected_entries"
 
       - name: Upload release files
@@ -178,10 +178,10 @@ jobs:
         run: |
           set -euo pipefail
           expected_files="$(printf '%s\n' \
-            "gpw2-battery-v$VERSION-aarch64-apple-darwin.tar.gz" \
-            "gpw2-battery-v$VERSION-aarch64-apple-darwin.tar.gz.sha256" \
-            "gpw2-battery-v$VERSION-x86_64-apple-darwin.tar.gz" \
-            "gpw2-battery-v$VERSION-x86_64-apple-darwin.tar.gz.sha256" | LC_ALL=C sort)"
+            "gpwbat-v$VERSION-aarch64-apple-darwin.tar.gz" \
+            "gpwbat-v$VERSION-aarch64-apple-darwin.tar.gz.sha256" \
+            "gpwbat-v$VERSION-x86_64-apple-darwin.tar.gz" \
+            "gpwbat-v$VERSION-x86_64-apple-darwin.tar.gz.sha256" | LC_ALL=C sort)"
           actual_files="$(find dist -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)"
           test "$actual_files" = "$expected_files" || {
             echo "Unexpected release file set:" >&2
@@ -256,50 +256,50 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          arm_archive="gpw2-battery-v$VERSION-aarch64-apple-darwin.tar.gz"
-          intel_archive="gpw2-battery-v$VERSION-x86_64-apple-darwin.tar.gz"
+          arm_archive="gpwbat-v$VERSION-aarch64-apple-darwin.tar.gz"
+          intel_archive="gpwbat-v$VERSION-x86_64-apple-darwin.tar.gz"
           arm_sha="$(sha256sum "dist/$arm_archive" | awk '{ print $1 }')"
           intel_sha="$(sha256sum "dist/$intel_archive" | awk '{ print $1 }')"
 
           mkdir -p formula
-          cat > formula/gpw2-battery.rb <<EOF
-          class Gpw2Battery < Formula
+          cat > formula/gpwbat.rb <<EOF
+          class Gpwbat < Formula
             desc "Read Logitech GPW2 battery status on macOS"
-            homepage "https://github.com/softmaxe/gpw2-battery"
+            homepage "https://github.com/softmaxe/gpwbat"
             license "AGPL-3.0-only"
 
             depends_on macos: :big_sur
 
             on_macos do
               on_arm do
-                url "https://github.com/softmaxe/gpw2-battery/releases/download/$TAG/$arm_archive"
+                url "https://github.com/softmaxe/gpwbat/releases/download/$TAG/$arm_archive"
                 sha256 "$arm_sha"
               end
 
               on_intel do
-                url "https://github.com/softmaxe/gpw2-battery/releases/download/$TAG/$intel_archive"
+                url "https://github.com/softmaxe/gpwbat/releases/download/$TAG/$intel_archive"
                 sha256 "$intel_sha"
               end
             end
 
             def install
-              bin.install "gpw2-battery"
+              bin.install "gpwbat"
               prefix.install "LICENSE"
             end
 
             test do
-              assert_equal "gpw2-battery #{version}", shell_output("#{bin}/gpw2-battery --version").strip
+              assert_equal "gpwbat #{version}", shell_output("#{bin}/gpwbat --version").strip
             end
           end
           EOF
 
-          ruby -c formula/gpw2-battery.rb
+          ruby -c formula/gpwbat.rb
 
       - name: Upload candidate formula
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: homebrew-formula
-          path: formula/gpw2-battery.rb
+          path: formula/gpwbat.rb
           if-no-files-found: error
           retention-days: 30
 
@@ -339,14 +339,14 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           brew tap-new softmaxe/release-test
           test_tap="$(brew --repository softmaxe/release-test)"
-          install -m 0644 formula/gpw2-battery.rb "$test_tap/Formula/gpw2-battery.rb"
+          install -m 0644 formula/gpwbat.rb "$test_tap/Formula/gpwbat.rb"
 
-          brew audit --strict softmaxe/release-test/gpw2-battery
-          brew install softmaxe/release-test/gpw2-battery
-          brew test softmaxe/release-test/gpw2-battery
-          test "$(gpw2-battery --version)" = "gpw2-battery $VERSION"
+          brew audit --strict softmaxe/release-test/gpwbat
+          brew install softmaxe/release-test/gpwbat
+          brew test softmaxe/release-test/gpwbat
+          test "$(gpwbat --version)" = "gpwbat $VERSION"
 
-          installed_archs="$(lipo -archs "$(brew --prefix gpw2-battery)/bin/gpw2-battery")"
+          installed_archs="$(lipo -archs "$(brew --prefix gpwbat)/bin/gpwbat")"
           test "$installed_archs" = "${{ matrix.machine_arch }}"
 
   tap-sync:
@@ -361,7 +361,7 @@ jobs:
     permissions:
       contents: read
     concurrency:
-      group: homebrew-tap-gpw2-battery
+      group: homebrew-tap-gpwbat
       cancel-in-progress: false
     steps:
       - name: Check out Homebrew tap
@@ -386,13 +386,13 @@ jobs:
           set -euo pipefail
           cd homebrew-tap
 
-          if [[ -f Formula/gpw2-battery.rb ]]; then
-            current_version="$(sed -n 's/^[[:space:]]*version "\([^"]*\)"/\1/p' Formula/gpw2-battery.rb | head -n 1)"
+          if [[ -f Formula/gpwbat.rb ]]; then
+            current_version="$(sed -n 's/^[[:space:]]*version "\([^"]*\)"/\1/p' Formula/gpwbat.rb | head -n 1)"
             if [[ -z "$current_version" ]]; then
-              current_version="$(sed -nE 's/.*gpw2-battery-v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' Formula/gpw2-battery.rb | head -n 1)"
+              current_version="$(sed -nE 's/.*gpwbat-v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' Formula/gpwbat.rb | head -n 1)"
             fi
             if [[ -z "$current_version" ]]; then
-              echo "Existing Formula/gpw2-battery.rb has no version" >&2
+              echo "Existing Formula/gpwbat.rb has no version" >&2
               exit 1
             fi
             newest_version="$(printf '%s\n' "$current_version" "$VERSION" | sort -V | tail -n 1)"
@@ -402,26 +402,26 @@ jobs:
             fi
           fi
 
-          install -m 0644 ../formula/gpw2-battery.rb Formula/gpw2-battery.rb
+          install -m 0644 ../formula/gpwbat.rb Formula/gpwbat.rb
 
           status_paths="$(git status --porcelain=v1 --untracked-files=all | awk '{ print $2 }' | LC_ALL=C sort -u)"
-          if [[ -n "$status_paths" && "$status_paths" != "Formula/gpw2-battery.rb" ]]; then
+          if [[ -n "$status_paths" && "$status_paths" != "Formula/gpwbat.rb" ]]; then
             echo "Unexpected Homebrew tap changes:" >&2
             git status --short >&2
             exit 1
           fi
 
-          git add Formula/gpw2-battery.rb
+          git add Formula/gpwbat.rb
           if git diff --cached --quiet; then
-            echo "Formula/gpw2-battery.rb is already current"
+            echo "Formula/gpwbat.rb is already current"
             exit 0
           fi
 
           git diff --cached --check
-          test "$(git diff --cached --name-only)" = "Formula/gpw2-battery.rb"
-          git diff --cached -- Formula/gpw2-battery.rb
+          test "$(git diff --cached --name-only)" = "Formula/gpwbat.rb"
+          git diff --cached -- Formula/gpwbat.rb
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit -m "chore: update gpw2-battery to $VERSION"
+          git commit -m "chore: update gpwbat to $VERSION"
           git push origin HEAD:main

@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use gpw2_battery::hidpp::{open_first_working_transport, read_battery, BatteryStatus};
+use gpwbat::hidpp::{open_first_working_transport, read_battery, BatteryStatus};
 use hidapi::HidApi;
 
 fn main() -> ExitCode {
@@ -18,7 +18,7 @@ fn main() -> ExitCode {
     }
 }
 
-const PACKAGE_NAME: &str = "gpw2-battery";
+const PACKAGE_NAME: &str = "gpwbat";
 
 fn version_text() -> String {
     format!("{PACKAGE_NAME} {}", env!("CARGO_PKG_VERSION"))
@@ -54,7 +54,7 @@ fn format_status(status: BatteryStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::{format_status, version_text};
-    use gpw2_battery::hidpp::BatteryStatus;
+    use gpwbat::hidpp::BatteryStatus;
 
     #[test]
     fn formats_battery_status_for_terminal_and_raycast() {
@@ -89,7 +89,7 @@ mod tests {
     fn formats_version_for_release_and_homebrew_checks() {
         assert_eq!(
             version_text(),
-            concat!("gpw2-battery ", env!("CARGO_PKG_VERSION"))
+            concat!("gpwbat ", env!("CARGO_PKG_VERSION"))
         );
     }
 }
