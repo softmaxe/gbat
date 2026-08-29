@@ -32,6 +32,24 @@ cargo build --release
 
 The binary is written to target/release/gpw2-battery.
 
+## Install with Homebrew
+
+Install the architecture-specific release through the existing tap:
+
+~~~
+brew install softmaxe/tap/gpw2-battery
+gpw2-battery --version
+~~~
+
+Homebrew selects the arm64 package on Apple Silicon and the x86_64 package on Intel. Upgrade or remove it with:
+
+~~~
+brew upgrade gpw2-battery
+brew uninstall gpw2-battery
+~~~
+
+The formula puts `gpw2-battery` on Homebrew's `bin` directory, so it can be called from Terminal and Raycast.
+
 ## Use from Terminal
 
 Run the binary directly from the project:
@@ -62,11 +80,13 @@ The repository includes raycast/mouse-battery.sh as a Raycast Script Command. Ad
 
 The wrapper looks for the binary in this order:
 
-1. target/release/gpw2-battery in this project
-2. gpw2-battery in the project directory
-3. $HOME/.local/bin/gpw2-battery
-4. /opt/homebrew/bin/gpw2-battery
-5. /usr/local/bin/gpw2-battery
+1. `GPW2_BATTERY_BINARY`
+2. `command -v gpw2-battery`
+3. `/opt/homebrew/bin/gpw2-battery`
+4. `/usr/local/bin/gpw2-battery`
+5. `$HOME/.local/bin/gpw2-battery`
+6. `target/release/gpw2-battery` in this project
+7. `gpw2-battery` in the project directory
 
 Set GPW2_BATTERY_BINARY when the binary lives somewhere else:
 
@@ -91,3 +111,11 @@ No responsive Logitech HID++ interface found means that no matching interface an
 Could not initialize HID access or an access error can indicate a macOS permission issue. Run the command once from Terminal and approve any prompt macOS shows. The command does not require sudo in normal setups.
 
 If the mouse has gone to sleep, move it or click a button before retrying. A full battery may report Battery: 100% without (charging) because the mouse is no longer actively charging.
+
+Release binaries are unsigned and are not notarized by Apple. If macOS blocks the binary, first open System Settings, then Privacy & Security, and choose Open Anyway for gpw2-battery. If that does not work, remove quarantine only from the Homebrew-installed formula:
+
+~~~
+xattr -dr com.apple.quarantine "$(brew --prefix gpw2-battery)"
+~~~
+
+GitHub build provenance attestations identify the workflow and source repository that produced a release asset. They do not replace an Apple Developer ID signature or notarization.

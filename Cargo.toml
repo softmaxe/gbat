@@ -1,8 +1,11 @@
 [package]
 name = "gpw2-battery"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 description = "Read Logitech GPW2 battery status on macOS"
+license = "AGPL-3.0-only"
+repository = "https://github.com/softmaxe/gpw2-battery"
+homepage = "https://github.com/softmaxe/gpw2-battery"
 
 [dependencies]
 hidapi = { version = "2.6.7", features = ["macos-shared-device"] }

@@ -4,6 +4,11 @@ use gpw2_battery::hidpp::{open_first_working_transport, read_battery, BatterySta
 use hidapi::HidApi;
 
 fn main() -> ExitCode {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("{}", version_text());
+        return ExitCode::SUCCESS;
+    }
+
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(message) => {
@@ -11,6 +16,12 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+const PACKAGE_NAME: &str = "gpw2-battery";
+
+fn version_text() -> String {
+    format!("{PACKAGE_NAME} {}", env!("CARGO_PKG_VERSION"))
 }
 
 fn run() -> Result<(), String> {
@@ -42,7 +53,7 @@ fn format_status(status: BatteryStatus) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_status;
+    use super::{format_status, version_text};
     use gpw2_battery::hidpp::BatteryStatus;
 
     #[test]
@@ -71,6 +82,14 @@ mod tests {
                 charging: false,
             }),
             "Battery: 100%"
+        );
+    }
+
+    #[test]
+    fn formats_version_for_release_and_homebrew_checks() {
+        assert_eq!(
+            version_text(),
+            concat!("gpw2-battery ", env!("CARGO_PKG_VERSION"))
         );
     }
 }

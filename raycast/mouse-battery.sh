@@ -14,14 +14,16 @@ project_dir="${script_dir:h}"
 
 if [[ -n "${GPW2_BATTERY_BINARY:-}" ]]; then
   binary_path="$GPW2_BATTERY_BINARY"
+elif binary_path="$(command -v gpw2-battery 2>/dev/null)" && [[ -x "$binary_path" ]]; then
+  :
 else
   binary_path=""
   for candidate in \
-    "$project_dir/target/release/gpw2-battery" \
-    "$project_dir/gpw2-battery" \
-    "$HOME/.local/bin/gpw2-battery" \
     "/opt/homebrew/bin/gpw2-battery" \
-    "/usr/local/bin/gpw2-battery"; do
+    "/usr/local/bin/gpw2-battery" \
+    "$HOME/.local/bin/gpw2-battery" \
+    "$project_dir/target/release/gpw2-battery" \
+    "$project_dir/gpw2-battery"; do
     if [[ -x "$candidate" ]]; then
       binary_path="$candidate"
       break

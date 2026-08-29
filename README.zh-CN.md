@@ -32,6 +32,24 @@ cargo build --release
 
 可执行文件会写入 target/release/gpw2-battery。
 
+## 使用 Homebrew 安装
+
+通过现有 tap 安装对应架构的 Release：
+
+~~~
+brew install softmaxe/tap/gpw2-battery
+gpw2-battery --version
+~~~
+
+在 Apple Silicon 上，Homebrew 会选择 arm64 包；在 Intel Mac 上会选择 x86_64 包。升级或卸载命令如下：
+
+~~~
+brew upgrade gpw2-battery
+brew uninstall gpw2-battery
+~~~
+
+Formula 会把 `gpw2-battery` 放入 Homebrew 的 `bin` 目录，因此 Terminal 和 Raycast 都可以直接调用它。
+
 ## 从 Terminal 使用
 
 直接在项目目录中运行可执行文件：
@@ -62,11 +80,13 @@ cp target/release/gpw2-battery "$HOME/.local/bin/gpw2-battery"
 
 脚本按以下顺序查找可执行文件：
 
-1. `target/release/gpw2-battery`（当前项目中的可执行文件）
-2. `gpw2-battery`（项目目录中的可执行文件）
-3. `$HOME/.local/bin/gpw2-battery`
-4. `/opt/homebrew/bin/gpw2-battery`
-5. `/usr/local/bin/gpw2-battery`
+1. `GPW2_BATTERY_BINARY`
+2. `command -v gpw2-battery`
+3. `/opt/homebrew/bin/gpw2-battery`
+4. `/usr/local/bin/gpw2-battery`
+5. `$HOME/.local/bin/gpw2-battery`
+6. `target/release/gpw2-battery`（当前项目中的可执行文件）
+7. `gpw2-battery`（项目目录中的可执行文件）
 
 如果可执行文件位于其他位置，请设置 GPW2_BATTERY_BINARY：
 
@@ -91,3 +111,11 @@ export GPW2_BATTERY_BINARY="/path/to/gpw2-battery"
 `Could not initialize HID access` 或 `access error` 可能表示 macOS 权限问题。请先从 Terminal 运行一次命令，并批准 macOS 显示的任何提示。在正常设置下，该命令不需要 `sudo`。
 
 如果鼠标进入睡眠状态，请移动鼠标或点击按钮后重试。电量充满时可能显示 `Battery: 100%`，但没有 `(charging)`，因为鼠标已经不再处于充电状态。
+
+Release 二进制没有签名，也没有经过 Apple notarization。如果 macOS 阻止运行，请先打开 System Settings，进入 Privacy & Security，并为 gpw2-battery 选择 Open Anyway。如果仍然无法运行，只清除这个 Homebrew Formula 的 quarantine：
+
+~~~
+xattr -dr com.apple.quarantine "$(brew --prefix gpw2-battery)"
+~~~
+
+GitHub build provenance attestation 可以标识生成 Release 文件的 workflow 和源仓库，但不能替代 Apple Developer ID 签名或 notarization。
