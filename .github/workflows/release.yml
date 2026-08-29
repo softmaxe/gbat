@@ -266,7 +266,6 @@ jobs:
           class Gpw2Battery < Formula
             desc "Read Logitech GPW2 battery status on macOS"
             homepage "https://github.com/softmaxe/gpw2-battery"
-            version "$VERSION"
             license "AGPL-3.0-only"
 
             depends_on macos: :big_sur
@@ -390,7 +389,10 @@ jobs:
           if [[ -f Formula/gpw2-battery.rb ]]; then
             current_version="$(sed -n 's/^[[:space:]]*version "\([^"]*\)"/\1/p' Formula/gpw2-battery.rb | head -n 1)"
             if [[ -z "$current_version" ]]; then
-              echo "Existing Formula/gpw2-battery.rb has no explicit version" >&2
+              current_version="$(sed -nE 's/.*gpw2-battery-v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' Formula/gpw2-battery.rb | head -n 1)"
+            fi
+            if [[ -z "$current_version" ]]; then
+              echo "Existing Formula/gpw2-battery.rb has no version" >&2
               exit 1
             fi
             newest_version="$(printf '%s\n' "$current_version" "$VERSION" | sort -V | tail -n 1)"
