@@ -15,6 +15,10 @@ gpwbat 是一个小型 macOS 命令行工具，用于读取 Logitech G Pro Wirel
 
 macOS hidapi 后端使用共享设备访问，因此 Terminal 和 Raycast 的独立调用都可以打开 HID 接口，不会发生独占打开冲突。
 
+<p align="center">
+  <img src="assets/demo.gif" alt="gpwbat 演示 — Terminal 与 Raycast 用法" width="700">
+</p>
+
 ## 支持的连接方式
 
 - Logitech LIGHTSPEED 接收器

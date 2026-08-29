@@ -15,6 +15,10 @@ It talks to the mouse through the Logitech HID++ 2.0 vendor interface. It does n
 
 The macOS hidapi backend uses shared device access, so separate Terminal and Raycast invocations can open the HID interface without an exclusive-open conflict.
 
+<p align="center">
+  <img src="assets/demo.gif" alt="gpwbat demo — Terminal and Raycast usage" width="700">
+</p>
+
 ## Supported connections
 
 - Logitech LIGHTSPEED receiver
