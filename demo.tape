@@ -7,9 +7,7 @@ Set Padding 24
 Set Framerate 30
 Set Theme "Catppuccin Mocha"
 Set WindowBar Colorful
-Set BorderRadius 12
-Set Margin 16
-Set MarginFill "#0e0e10"
+Set BorderRadius 8
 Set TypingSpeed 45ms
 Set CursorBlink false
 
