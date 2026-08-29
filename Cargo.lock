@@ -26,7 +26,7 @@ checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
 
 [[package]]
 name = "gpw2-battery"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "hidapi",
 ]

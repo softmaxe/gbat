@@ -1,6 +1,6 @@
 [package]
 name = "gpw2-battery"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "Read Logitech GPW2 battery status on macOS"
 license = "AGPL-3.0-only"
