@@ -389,7 +389,7 @@ jobs:
           if [[ -f Formula/gbat.rb ]]; then
             current_version="$(sed -n 's/^[[:space:]]*version "\([^"]*\)"/\1/p' Formula/gbat.rb | head -n 1)"
             if [[ -z "$current_version" ]]; then
-              current_version="$(sed -nE 's/.*gbat-v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' Formula/gbat.rb | head -n 1)"
+              current_version="$(sed -nE 's/.*-v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' Formula/gbat.rb | head -n 1)"
             fi
             if [[ -z "$current_version" ]]; then
               echo "Existing Formula/gbat.rb has no version" >&2
