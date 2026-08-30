@@ -1,6 +1,6 @@
 [package]
 name = "gbat"
-version = "1.0.4"
+version = "1.0.5"
 edition = "2021"
 description = "Read Logitech GPW2 battery status on macOS"
 license = "AGPL-3.0-only"
