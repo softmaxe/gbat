@@ -17,11 +17,11 @@ Sleep 500ms
 Show
 
 # 1 - version check
-Type "gpwbat --version" Sleep 800ms Enter
+Type "gbat --version" Sleep 800ms Enter
 Sleep 1200ms
 
 # 2 - main battery read
-Type "gpwbat" Sleep 600ms Enter
+Type "gbat" Sleep 600ms Enter
 Sleep 1500ms
 
 # 3 - Raycast script path
@@ -29,7 +29,7 @@ Type "./raycast/mouse-battery.sh" Sleep 600ms Enter
 Sleep 1500ms
 
 # 4 - stdout is scriptable
-Type "echo $(gpwbat)" Sleep 600ms Enter
+Type "echo $(gbat)" Sleep 600ms Enter
 Sleep 1500ms
 
 Sleep 2s

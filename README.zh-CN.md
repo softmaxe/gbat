@@ -1,22 +1,22 @@
 <p align="center">
-  <img src="assets/gpwbat-logo.png" alt="gpwbat logo" width="180">
+  <img src="assets/gbat-logo.png" alt="gbat logo" width="180">
 </p>
 
-<h1 align="center">gpwbat</h1>
+<h1 align="center">gbat</h1>
 
 <p align="center">
   <a href="README.md"><kbd>English</kbd></a>
   <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
 </p>
 
-gpwbat 是一个小型 macOS 命令行工具，用于读取 Logitech G Pro Wireless 2 鼠标当前的电量和充电状态。
+gbat 是一个小型 macOS 命令行工具，用于读取 Logitech G Pro Wireless 2 鼠标当前的电量和充电状态。
 
 它通过 Logitech HID++ 2.0 厂商接口与鼠标通信。不需要 Logitech G HUB、Python 或后台进程。同一个可执行文件既可以在 Terminal 中运行，也可以从 Raycast 调用。
 
 macOS hidapi 后端使用共享设备访问，因此 Terminal 和 Raycast 的独立调用都可以打开 HID 接口，不会发生独占打开冲突。
 
 <p align="center">
-  <img src="assets/demo.gif" alt="gpwbat 演示 — Terminal 与 Raycast 用法" width="700">
+  <img src="assets/demo.gif" alt="gbat 演示 — Terminal 与 Raycast 用法" width="700">
 </p>
 
 ## 支持的连接方式
@@ -34,32 +34,32 @@ macOS hidapi 后端使用共享设备访问，因此 Terminal 和 Raycast 的独
 cargo build --release
 ~~~
 
-可执行文件会写入 target/release/gpwbat。
+可执行文件会写入 target/release/gbat。
 
 ## 使用 Homebrew 安装
 
 通过现有 tap 安装对应架构的 Release：
 
 ~~~
-brew install softmaxe/tap/gpwbat
-gpwbat --version
+brew install softmaxe/tap/gbat
+gbat --version
 ~~~
 
 在 Apple Silicon 上，Homebrew 会选择 arm64 包；在 Intel Mac 上会选择 x86_64 包。升级或卸载命令如下：
 
 ~~~
-brew upgrade gpwbat
-brew uninstall gpwbat
+brew upgrade gbat
+brew uninstall gbat
 ~~~
 
-Formula 会把 `gpwbat` 放入 Homebrew 的 `bin` 目录，因此 Terminal 和 Raycast 都可以直接调用它。
+Formula 会把 `gbat` 放入 Homebrew 的 `bin` 目录，因此 Terminal 和 Raycast 都可以直接调用它。
 
 ## 从 Terminal 使用
 
 直接在项目目录中运行可执行文件：
 
 ~~~
-./target/release/gpwbat
+./target/release/gbat
 ~~~
 
 成功时输出一行：
@@ -75,7 +75,7 @@ Battery: 42% (charging)
 
 ~~~
 mkdir -p "$HOME/.local/bin"
-cp target/release/gpwbat "$HOME/.local/bin/gpwbat"
+cp target/release/gbat "$HOME/.local/bin/gbat"
 ~~~
 
 ## 从 Raycast 使用
@@ -84,19 +84,20 @@ cp target/release/gpwbat "$HOME/.local/bin/gpwbat"
 
 脚本按以下顺序查找可执行文件：
 
-1. `GPWBAT_BINARY`
-2. `GPW2_BATTERY_BINARY`（旧变量，兼容保留）
-3. `command -v gpwbat`
-4. `/opt/homebrew/bin/gpwbat`
-5. `/usr/local/bin/gpwbat`
-6. `$HOME/.local/bin/gpwbat`
-7. `target/release/gpwbat`（当前项目中的可执行文件）
-8. `gpwbat`（项目目录中的可执行文件）
+1. `GBAT_BINARY`
+2. `GPWBAT_BINARY`（旧变量，兼容保留）
+3. `GPW2_BATTERY_BINARY`（旧变量，兼容保留）
+4. `command -v gbat`
+5. `/opt/homebrew/bin/gbat`
+6. `/usr/local/bin/gbat`
+7. `$HOME/.local/bin/gbat`
+8. `target/release/gbat`（当前项目中的可执行文件）
+9. `gbat`（项目目录中的可执行文件）
 
-如果可执行文件位于其他位置，请设置 GPWBAT_BINARY：
+如果可执行文件位于其他位置，请设置 GBAT_BINARY：
 
 ~~~
-export GPWBAT_BINARY="/path/to/gpwbat"
+export GBAT_BINARY="/path/to/gbat"
 ~~~
 
 脚本会直接执行可执行文件，绝不会运行 cargo run。
@@ -117,10 +118,10 @@ export GPWBAT_BINARY="/path/to/gpwbat"
 
 如果鼠标进入睡眠状态，请移动鼠标或点击按钮后重试。电量充满时可能显示 `Battery: 100%`，但没有 `(charging)`，因为鼠标已经不再处于充电状态。
 
-Release 二进制没有签名，也没有经过 Apple notarization。如果 macOS 阻止运行，请先打开 System Settings，进入 Privacy & Security，并为 gpwbat 选择 Open Anyway。如果仍然无法运行，只清除这个 Homebrew Formula 的 quarantine：
+Release 二进制没有签名，也没有经过 Apple notarization。如果 macOS 阻止运行，请先打开 System Settings，进入 Privacy & Security，并为 gbat 选择 Open Anyway。如果仍然无法运行，只清除这个 Homebrew Formula 的 quarantine：
 
 ~~~
-xattr -dr com.apple.quarantine "$(brew --prefix gpwbat)"
+xattr -dr com.apple.quarantine "$(brew --prefix gbat)"
 ~~~
 
 GitHub build provenance attestation 可以标识生成 Release 文件的 workflow 和源仓库，但不能替代 Apple Developer ID 签名或 notarization。

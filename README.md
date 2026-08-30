@@ -1,22 +1,22 @@
 <p align="center">
-  <img src="assets/gpwbat-logo.png" alt="gpwbat logo" width="180">
+  <img src="assets/gbat-logo.png" alt="gbat logo" width="180">
 </p>
 
-<h1 align="center">gpwbat</h1>
+<h1 align="center">gbat</h1>
 
 <p align="center">
   <a href="README.md"><kbd>English</kbd></a>
   <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
 </p>
 
-gpwbat is a small macOS command-line tool for reading the current battery level and active charging state of a Logitech G Pro Wireless 2 mouse.
+gbat is a small macOS command-line tool for reading the current battery level and active charging state of a Logitech G Pro Wireless 2 mouse.
 
 It talks to the mouse through the Logitech HID++ 2.0 vendor interface. It does not need Logitech G HUB, Python, or a background process. The same binary works from Terminal and from Raycast.
 
 The macOS hidapi backend uses shared device access, so separate Terminal and Raycast invocations can open the HID interface without an exclusive-open conflict.
 
 <p align="center">
-  <img src="assets/demo.gif" alt="gpwbat demo — Terminal and Raycast usage" width="700">
+  <img src="assets/demo.gif" alt="gbat demo — Terminal and Raycast usage" width="700">
 </p>
 
 ## Supported connections
@@ -34,32 +34,32 @@ Rust is needed to build the project. A prebuilt binary can be used without insta
 cargo build --release
 ~~~
 
-The binary is written to target/release/gpwbat.
+The binary is written to target/release/gbat.
 
 ## Install with Homebrew
 
 Install the architecture-specific release through the existing tap:
 
 ~~~
-brew install softmaxe/tap/gpwbat
-gpwbat --version
+brew install softmaxe/tap/gbat
+gbat --version
 ~~~
 
 Homebrew selects the arm64 package on Apple Silicon and the x86_64 package on Intel. Upgrade or remove it with:
 
 ~~~
-brew upgrade gpwbat
-brew uninstall gpwbat
+brew upgrade gbat
+brew uninstall gbat
 ~~~
 
-The formula puts `gpwbat` on Homebrew's `bin` directory, so it can be called from Terminal and Raycast.
+The formula puts `gbat` on Homebrew's `bin` directory, so it can be called from Terminal and Raycast.
 
 ## Use from Terminal
 
 Run the binary directly from the project:
 
 ~~~
-./target/release/gpwbat
+./target/release/gbat
 ~~~
 
 Successful output is one line:
@@ -75,7 +75,7 @@ To use the command from any directory, copy the release binary to a directory on
 
 ~~~
 mkdir -p "$HOME/.local/bin"
-cp target/release/gpwbat "$HOME/.local/bin/gpwbat"
+cp target/release/gbat "$HOME/.local/bin/gbat"
 ~~~
 
 ## Use from Raycast
@@ -84,19 +84,20 @@ The repository includes raycast/mouse-battery.sh as a Raycast Script Command. Ad
 
 The wrapper looks for the binary in this order:
 
-1. `GPWBAT_BINARY`
-2. `GPW2_BATTERY_BINARY` (legacy, for compatibility)
-3. `command -v gpwbat`
-4. `/opt/homebrew/bin/gpwbat`
-5. `/usr/local/bin/gpwbat`
-6. `$HOME/.local/bin/gpwbat`
-7. `target/release/gpwbat` in this project
-8. `gpwbat` in the project directory
+1. `GBAT_BINARY`
+2. `GPWBAT_BINARY` (legacy, for compatibility)
+3. `GPW2_BATTERY_BINARY` (legacy, for compatibility)
+4. `command -v gbat`
+5. `/opt/homebrew/bin/gbat`
+6. `/usr/local/bin/gbat`
+7. `$HOME/.local/bin/gbat`
+8. `target/release/gbat` in this project
+9. `gbat` in the project directory
 
-Set GPWBAT_BINARY when the binary lives somewhere else:
+Set GBAT_BINARY when the binary lives somewhere else:
 
 ~~~
-export GPWBAT_BINARY="/path/to/gpwbat"
+export GBAT_BINARY="/path/to/gbat"
 ~~~
 
 The wrapper executes the binary directly. It never runs cargo run.
@@ -117,10 +118,10 @@ Could not initialize HID access or an access error can indicate a macOS permissi
 
 If the mouse has gone to sleep, move it or click a button before retrying. A full battery may report Battery: 100% without (charging) because the mouse is no longer actively charging.
 
-Release binaries are unsigned and are not notarized by Apple. If macOS blocks the binary, first open System Settings, then Privacy & Security, and choose Open Anyway for gpwbat. If that does not work, remove quarantine only from the Homebrew-installed formula:
+Release binaries are unsigned and are not notarized by Apple. If macOS blocks the binary, first open System Settings, then Privacy & Security, and choose Open Anyway for gbat. If that does not work, remove quarantine only from the Homebrew-installed formula:
 
 ~~~
-xattr -dr com.apple.quarantine "$(brew --prefix gpwbat)"
+xattr -dr com.apple.quarantine "$(brew --prefix gbat)"
 ~~~
 
 GitHub build provenance attestations identify the workflow and source repository that produced a release asset. They do not replace an Apple Developer ID signature or notarization.
