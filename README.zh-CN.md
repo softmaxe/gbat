@@ -16,7 +16,7 @@ gbat 是一个小型 macOS 命令行工具，用于读取 Logitech G Pro Wireles
 macOS hidapi 后端使用共享设备访问，因此 Terminal 和 Raycast 的独立调用都可以打开 HID 接口，不会发生独占打开冲突。
 
 <p align="center">
-  <img src="assets/demo.gif" alt="gbat 演示 — Terminal 与 Raycast 用法" width="700">
+  <img src="assets/demo.gif" alt="gbat CLI 演示" width="700">
 </p>
 
 ## 支持的连接方式
@@ -81,6 +81,10 @@ cp target/release/gbat "$HOME/.local/bin/gbat"
 ## 从 Raycast 使用
 
 仓库包含 raycast/mouse-battery.sh，可作为 Raycast Script Command 使用。将仓库的 raycast 目录添加到 Raycast 设置，然后运行 Logitech Mouse Battery。
+
+<p align="center">
+  <img src="assets/raycast-demo.webp" alt="gbat Raycast 脚本命令演示" width="700">
+</p>
 
 脚本按以下顺序查找可执行文件：
 
