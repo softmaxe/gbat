@@ -16,7 +16,7 @@ It talks to the mouse through the Logitech HID++ 2.0 vendor interface. It does n
 The macOS hidapi backend uses shared device access, so separate Terminal and Raycast invocations can open the HID interface without an exclusive-open conflict.
 
 <p align="center">
-  <img src="assets/demo.gif" alt="gbat demo — Terminal and Raycast usage" width="700">
+  <img src="assets/demo.gif" alt="gbat CLI demo" width="700">
 </p>
 
 ## Supported connections
@@ -81,6 +81,10 @@ cp target/release/gbat "$HOME/.local/bin/gbat"
 ## Use from Raycast
 
 The repository includes raycast/mouse-battery.sh as a Raycast Script Command. Add the repository's raycast directory under Raycast Settings, then run Logitech Mouse Battery.
+
+<p align="center">
+  <img src="assets/raycast-demo.webp" alt="gbat Raycast script command demo" width="700">
+</p>
 
 The wrapper looks for the binary in this order:
 
