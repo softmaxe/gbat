@@ -1,4 +1,3 @@
-use std::ffi::CString;
 use std::fmt;
 use std::time::{Duration, Instant};
 
@@ -108,19 +107,15 @@ pub fn parse_feature_index(response: &[u8]) -> Result<Option<u8>, ProtocolError>
 }
 
 pub fn parse_unified_battery(response: &[u8]) -> Result<BatteryStatus, ProtocolError> {
-    parse_battery(response, 7, 8)
+    parse_battery(response, 7)
 }
 
 pub fn parse_battery_status(response: &[u8]) -> Result<BatteryStatus, ProtocolError> {
-    parse_battery(response, 6, 7)
+    parse_battery(response, 6)
 }
 
-fn parse_battery(
-    response: &[u8],
-    charging_offset: usize,
-    minimum_length: usize,
-) -> Result<BatteryStatus, ProtocolError> {
-    validate_response(response, None, minimum_length)?;
+fn parse_battery(response: &[u8], charging_offset: usize) -> Result<BatteryStatus, ProtocolError> {
+    validate_response(response, None, charging_offset + 1)?;
     Ok(BatteryStatus {
         level: response[4],
         charging: response[charging_offset] & 0x01 != 0,
@@ -180,6 +175,7 @@ fn send_short(
     feature_index: u8,
     function: u8,
     sw_id: u8,
+    payload: [u8; 3],
 ) -> Result<(), HidppError> {
     let function_byte = ((function & 0x0F) << 4) | (sw_id & 0x0F);
     let report = [
@@ -187,9 +183,9 @@ fn send_short(
         device_index,
         feature_index,
         function_byte,
-        0,
-        0,
-        0,
+        payload[0],
+        payload[1],
+        payload[2],
     ];
     let actual = device.write(&report)?;
     if actual != report.len() {
@@ -248,23 +244,14 @@ fn get_feature_index_on_device(
     feature_id: u16,
 ) -> Result<Option<u8>, HidppError> {
     flush(device)?;
-    let function_byte = sw_id & 0x0F;
-    let report = [
-        REPORT_ID_SHORT,
+    send_short(
+        device,
         device_index,
         FEATURE_ROOT as u8,
-        function_byte,
-        (feature_id >> 8) as u8,
-        feature_id as u8,
         0,
-    ];
-    let actual = device.write(&report)?;
-    if actual != report.len() {
-        return Err(HidppError::ShortWrite {
-            expected: report.len(),
-            actual,
-        });
-    }
+        sw_id,
+        [(feature_id >> 8) as u8, feature_id as u8, 0],
+    )?;
     let response = match read_response(device, device_index, FEATURE_ROOT as u8)? {
         Some(response) => response,
         None => return Ok(None),
@@ -272,34 +259,21 @@ fn get_feature_index_on_device(
     Ok(parse_feature_index(&response)?)
 }
 
-fn query_unified_on_device(
+fn query_battery_on_device(
     device: &HidDevice,
     device_index: u8,
     sw_id: u8,
     feature_index: u8,
+    function: u8,
+    parse_response: fn(&[u8]) -> Result<BatteryStatus, ProtocolError>,
 ) -> Result<Option<BatteryStatus>, HidppError> {
     flush(device)?;
-    send_short(device, device_index, feature_index, 0x01, sw_id)?;
+    send_short(device, device_index, feature_index, function, sw_id, [0; 3])?;
     let response = match read_response(device, device_index, feature_index)? {
         Some(response) => response,
         None => return Ok(None),
     };
-    Ok(Some(parse_unified_battery(&response)?))
-}
-
-fn query_legacy_on_device(
-    device: &HidDevice,
-    device_index: u8,
-    sw_id: u8,
-    feature_index: u8,
-) -> Result<Option<BatteryStatus>, HidppError> {
-    flush(device)?;
-    send_short(device, device_index, feature_index, 0x00, sw_id)?;
-    let response = match read_response(device, device_index, feature_index)? {
-        Some(response) => response,
-        None => return Ok(None),
-    };
-    Ok(Some(parse_battery_status(&response)?))
+    Ok(Some(parse_response(&response)?))
 }
 
 pub fn get_feature_index(
@@ -317,29 +291,29 @@ pub fn get_feature_index(
 pub fn read_battery(transport: &HidppTransport) -> Result<Option<BatteryStatus>, HidppError> {
     let unified_index = get_feature_index(transport, FEATURE_UNIFIED_BATTERY)?;
     let unified_result = match unified_index {
-        Some(feature_index) => query_unified_on_device(
+        Some(feature_index) => query_battery_on_device(
             &transport.device,
             transport.device_index,
             transport.sw_id,
             feature_index,
+            0x01,
+            parse_unified_battery,
         ),
         None => Ok(None),
     };
 
     resolve_unified_result(unified_result, || {
-        let legacy_index = get_feature_index(transport, FEATURE_BATTERY_STATUS)?;
-        if let Some(feature_index) = legacy_index {
-            if let Some(status) = query_legacy_on_device(
-                &transport.device,
-                transport.device_index,
-                transport.sw_id,
-                feature_index,
-            )? {
-                return Ok(Some(status));
-            }
-        }
-
-        Ok(None)
+        let Some(feature_index) = get_feature_index(transport, FEATURE_BATTERY_STATUS)? else {
+            return Ok(None);
+        };
+        query_battery_on_device(
+            &transport.device,
+            transport.device_index,
+            transport.sw_id,
+            feature_index,
+            0x00,
+            parse_battery_status,
+        )
     })
 }
 
@@ -364,28 +338,17 @@ where
     }
 }
 
-struct CandidateInterface {
-    product_id: u16,
-    interface_number: i32,
-    path: CString,
-}
-
-fn candidate_interfaces(api: &HidApi) -> Vec<CandidateInterface> {
+fn candidate_interfaces(api: &HidApi) -> Vec<&hidapi::DeviceInfo> {
     let mut candidates = api
         .device_list()
         .filter(|info| info.vendor_id() == LOGITECH_VID && info.usage_page() == HIDPP_USAGE_PAGE)
-        .map(|info| CandidateInterface {
-            product_id: info.product_id(),
-            interface_number: info.interface_number(),
-            path: info.path().to_owned(),
-        })
         .collect::<Vec<_>>();
 
     candidates.sort_by(|left, right| {
-        left.product_id
-            .cmp(&right.product_id)
-            .then_with(|| left.interface_number.cmp(&right.interface_number))
-            .then_with(|| left.path.as_bytes().cmp(right.path.as_bytes()))
+        left.product_id()
+            .cmp(&right.product_id())
+            .then_with(|| left.interface_number().cmp(&right.interface_number()))
+            .then_with(|| left.path().to_bytes().cmp(right.path().to_bytes()))
     });
     candidates
 }
@@ -406,7 +369,7 @@ fn supports_battery(device: &HidDevice, device_index: u8) -> Result<bool, HidppE
 pub fn open_first_working_transport(api: &HidApi) -> Result<Option<HidppTransport>, HidppError> {
     let mut last_error = None;
     for candidate in candidate_interfaces(api) {
-        let device = match api.open_path(&candidate.path) {
+        let device = match api.open_path(candidate.path()) {
             Ok(device) => device,
             Err(error) => {
                 last_error = Some(error.into());
