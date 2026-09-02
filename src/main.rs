@@ -18,23 +18,19 @@ fn main() -> ExitCode {
     }
 }
 
-const PACKAGE_NAME: &str = "gbat";
-
-fn version_text() -> String {
-    format!("{PACKAGE_NAME} {}", env!("CARGO_PKG_VERSION"))
+fn version_text() -> &'static str {
+    concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"))
 }
 
 fn run() -> Result<(), String> {
     let api = HidApi::new().map_err(|error| format!("Could not initialize HID access: {error}"))?;
-    let transport = match open_first_working_transport(&api) {
-        Ok(Some(transport)) => transport,
-        Ok(None) => {
-            return Err(String::from(
+    let transport = open_first_working_transport(&api)
+        .map_err(|error| format!("Could not probe Logitech HID++ interface: {error}"))?
+        .ok_or_else(|| {
+            String::from(
                 "No responsive Logitech HID++ interface found. Connect the GPW2 through its LIGHTSPEED receiver or USB, wake it, and retry.",
-            ))
-        }
-        Err(error) => return Err(format!("Could not probe Logitech HID++ interface: {error}")),
-    };
+            )
+        })?;
     let status = read_battery(&transport)
         .map_err(|error| format!("Could not read battery level: {error}"))?
         .ok_or_else(|| {
@@ -87,9 +83,6 @@ mod tests {
 
     #[test]
     fn formats_version_for_release_and_homebrew_checks() {
-        assert_eq!(
-            version_text(),
-            concat!("gbat ", env!("CARGO_PKG_VERSION"))
-        );
+        assert_eq!(version_text(), concat!("gbat ", env!("CARGO_PKG_VERSION")));
     }
 }
