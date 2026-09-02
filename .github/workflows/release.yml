@@ -67,9 +67,6 @@ jobs:
           - runner: macos-15
             target: aarch64-apple-darwin
             machine_arch: arm64
-          - runner: macos-15-intel
-            target: x86_64-apple-darwin
-            machine_arch: x86_64
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -179,9 +176,7 @@ jobs:
           set -euo pipefail
           expected_files="$(printf '%s\n' \
             "gbat-v$VERSION-aarch64-apple-darwin.tar.gz" \
-            "gbat-v$VERSION-aarch64-apple-darwin.tar.gz.sha256" \
-            "gbat-v$VERSION-x86_64-apple-darwin.tar.gz" \
-            "gbat-v$VERSION-x86_64-apple-darwin.tar.gz.sha256" | LC_ALL=C sort)"
+            "gbat-v$VERSION-aarch64-apple-darwin.tar.gz.sha256" | LC_ALL=C sort)"
           actual_files="$(find dist -maxdepth 1 -type f -exec basename {} \; | LC_ALL=C sort)"
           test "$actual_files" = "$expected_files" || {
             echo "Unexpected release file set:" >&2
@@ -257,9 +252,7 @@ jobs:
         run: |
           set -euo pipefail
           arm_archive="gbat-v$VERSION-aarch64-apple-darwin.tar.gz"
-          intel_archive="gbat-v$VERSION-x86_64-apple-darwin.tar.gz"
           arm_sha="$(sha256sum "dist/$arm_archive" | awk '{ print $1 }')"
-          intel_sha="$(sha256sum "dist/$intel_archive" | awk '{ print $1 }')"
 
           mkdir -p formula
           cat > formula/gbat.rb <<EOF
@@ -269,16 +262,12 @@ jobs:
             license "AGPL-3.0-only"
 
             depends_on macos: :big_sur
+            depends_on arch: :arm64
 
             on_macos do
               on_arm do
                 url "https://github.com/softmaxe/gbat/releases/download/$TAG/$arm_archive"
                 sha256 "$arm_sha"
-              end
-
-              on_intel do
-                url "https://github.com/softmaxe/gbat/releases/download/$TAG/$intel_archive"
-                sha256 "$intel_sha"
               end
             end
 
@@ -318,8 +307,6 @@ jobs:
         include:
           - runner: macos-15
             machine_arch: arm64
-          - runner: macos-15-intel
-            machine_arch: x86_64
     steps:
       - name: Download candidate formula
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
