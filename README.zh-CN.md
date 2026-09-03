@@ -19,13 +19,19 @@ Battery: 42% (charging)
 - 支持 LIGHTSPEED 接收器和 USB 直连
 - 可在 Terminal 和 Raycast 中使用
 - 不需要 Logitech G HUB、Python 或后台进程
-- Terminal 和 Raycast 可共享 HID 设备访问，不会发生独占冲突
+- Terminal 和 Raycast 可共享 HID 设备访问
 
-运行 `gbat` 时，鼠标需要保持唤醒并已连接。
+## 系统要求
+
+- macOS 11（Big Sur）或更高版本
+- 通过 LIGHTSPEED 接收器或 USB 连接的 Logitech G Pro Wireless 2
+- 运行 `gbat` 时鼠标处于唤醒状态
 
 ## 安装
 
-Homebrew 会根据 Apple Silicon 或 Intel 架构安装对应的可执行文件：
+Homebrew 软件包和 GitHub Release 归档仅支持 Apple Silicon（`arm64`）。Release 可执行文件没有签名，也没有经过 notarization，因此 macOS 可能要求你在 System Settings > Privacy & Security 中批准该可执行文件。
+
+使用 Homebrew 安装 Apple Silicon 可执行文件：
 
 ```sh
 brew install softmaxe/tap/gbat
@@ -94,7 +100,7 @@ cp target/release/gbat "$HOME/.local/bin/gbat"
 | `Battery: 100%` 但没有 `(charging)` | 鼠标充满后可能停止主动充电，这是正常现象。 |
 | macOS 阻止运行 | 打开 System Settings > Privacy & Security，为 `gbat` 选择 Open Anyway。 |
 
-Release 可执行文件没有签名，也没有经过 Apple notarization。如果 Open Anyway 对 Homebrew 安装无效，只清除该 Formula 的 quarantine：
+如果 Open Anyway 对 Homebrew 安装无效，只清除该 Formula 的 quarantine：
 
 ```sh
 xattr -dr com.apple.quarantine "$(brew --prefix gbat)"
@@ -102,6 +108,10 @@ xattr -dr com.apple.quarantine "$(brew --prefix gbat)"
 
 ## 工作原理
 
-`gbat` 通过 Logitech HID++ 2.0 厂商接口通信。它会探测兼容的接收器和 USB 接口，优先读取 `UNIFIED_BATTERY` (`0x1004`)，不可用时回退到 `BATTERY_STATUS` (`0x1000`)。无效、不完整或缺失的响应会返回错误，不会显示为 `0%`。
+`gbat` 通过 Logitech HID++ 2.0 厂商接口通信。它会探测 Logitech HID++ 接口，检查设备索引 `1` 到 `6` 以及 `0xFF`，优先读取 `UNIFIED_BATTERY` (`0x1004`)，不可用时回退到 `BATTERY_STATUS` (`0x1000`)。无效、不完整或缺失的响应会返回错误，不会显示为 `0%`。
 
-GitHub Release provenance 用于标识构建归档文件的 workflow 和源仓库，不能替代 Apple 代码签名或 notarization。
+每个 Release 都会为归档文件单独发布 SHA-256 checksum 和 GitHub build provenance。这些内容不能替代 Apple 代码签名或 notarization。详见 [releases](https://github.com/softmaxe/gbat/releases) 和 [release workflow](.github/workflows/release.yml)。
+
+## 许可证
+
+[GNU Affero General Public License v3](LICENSE)，`AGPL-3.0-only`。

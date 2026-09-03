@@ -19,13 +19,21 @@ Battery: 42% (charging)
 - Supports the LIGHTSPEED receiver and a direct USB connection
 - Works in Terminal and Raycast
 - Does not require Logitech G HUB, Python, or a background process
-- Allows separate Terminal and Raycast invocations to share HID access
+- Lets separate Terminal and Raycast invocations share HID access
 
-The mouse must be awake and connected when `gbat` runs.
+## Requirements
+
+- macOS 11 (Big Sur) or later
+- A Logitech G Pro Wireless 2 connected through its LIGHTSPEED receiver or USB
+- A mouse that is awake when `gbat` runs
 
 ## Install
 
-Homebrew installs the correct binary for Apple Silicon or Intel:
+The Homebrew package and GitHub release archive support Apple silicon (`arm64`)
+only. The release binaries are unsigned and not notarized, so macOS may require
+approval in System Settings > Privacy & Security.
+
+Install the Apple silicon binary with Homebrew:
 
 ```sh
 brew install softmaxe/tap/gbat
@@ -47,7 +55,8 @@ Run `gbat` with the mouse connected through its LIGHTSPEED receiver or USB:
 gbat
 ```
 
-The command writes one battery status line to stdout. Errors go to stderr and return a non-zero exit status, so the output can be used in scripts.
+The command writes one battery status line to stdout. Errors go to stderr and
+return a non-zero exit status, so the output can be used in scripts.
 
 <p align="center">
   <img src="assets/demo.gif" alt="gbat CLI demo" width="700">
@@ -94,7 +103,8 @@ cp target/release/gbat "$HOME/.local/bin/gbat"
 | `Battery: 100%` without `(charging)` | A full mouse may stop active charging. This is expected. |
 | macOS blocks the binary | Open System Settings > Privacy & Security and choose Open Anyway for `gbat`. |
 
-Release binaries are unsigned and not notarized. If Open Anyway does not work for a Homebrew installation, remove quarantine from that formula only:
+If Open Anyway does not work for a Homebrew installation, remove quarantine
+from that formula only:
 
 ```sh
 xattr -dr com.apple.quarantine "$(brew --prefix gbat)"
@@ -102,6 +112,18 @@ xattr -dr com.apple.quarantine "$(brew --prefix gbat)"
 
 ## How it works
 
-`gbat` connects through Logitech's HID++ 2.0 vendor interface. It probes compatible receiver and USB interfaces, then reads `UNIFIED_BATTERY` (`0x1004`) or falls back to `BATTERY_STATUS` (`0x1000`). Invalid, incomplete, and missing responses return an error instead of reporting `0%`.
+`gbat` connects through Logitech's HID++ 2.0 vendor interface. It probes
+Logitech HID++ interfaces, checks device indices `1` through `6` and `0xFF`,
+then reads `UNIFIED_BATTERY` (`0x1004`) or falls back to `BATTERY_STATUS`
+(`0x1000`). Invalid, incomplete, and missing responses return an error instead
+of reporting `0%`.
 
-GitHub release provenance identifies the workflow and source repository used to build an archive. It does not replace Apple code signing or notarization.
+Each release publishes a SHA-256 checksum and GitHub build provenance for its
+archive. These do not replace Apple code signing or notarization. See the
+[releases](https://github.com/softmaxe/gbat/releases) and
+[release workflow](.github/workflows/release.yml) for the published files and
+build checks.
+
+## License
+
+[GNU Affero General Public License v3](LICENSE), `AGPL-3.0-only`.
