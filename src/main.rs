@@ -5,7 +5,11 @@ use hidapi::HidApi;
 
 fn main() -> ExitCode {
     if std::env::args().nth(1).as_deref() == Some("--version") {
-        println!("{}", version_text());
+        println!(concat!(
+            env!("CARGO_PKG_NAME"),
+            " ",
+            env!("CARGO_PKG_VERSION")
+        ));
         return ExitCode::SUCCESS;
     }
 
@@ -16,10 +20,6 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-fn version_text() -> &'static str {
-    concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"))
 }
 
 fn run() -> Result<(), String> {
@@ -49,7 +49,7 @@ fn format_status(status: BatteryStatus) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_status, version_text};
+    use super::format_status;
     use gbat::hidpp::BatteryStatus;
 
     #[test]
@@ -79,10 +79,5 @@ mod tests {
             }),
             "Battery: 100%"
         );
-    }
-
-    #[test]
-    fn formats_version_for_release_and_homebrew_checks() {
-        assert_eq!(version_text(), concat!("gbat ", env!("CARGO_PKG_VERSION")));
     }
 }

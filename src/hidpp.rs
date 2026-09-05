@@ -97,7 +97,19 @@ impl From<ProtocolError> for HidppError {
 pub struct HidppTransport {
     device: HidDevice,
     pub device_index: u8,
-    sw_id: u8,
+    battery_feature: BatteryFeature,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BatteryFeature {
+    Unified(u8),
+    Legacy(u8),
+}
+
+trait BatteryDevice {
+    fn selected_feature(&self) -> BatteryFeature;
+    fn discover_feature(&self, feature_id: u16) -> Result<Option<u8>, HidppError>;
+    fn query_feature(&self, feature: BatteryFeature) -> Result<Option<BatteryStatus>, HidppError>;
 }
 
 pub fn parse_feature_index(response: &[u8]) -> Result<Option<u8>, ProtocolError> {
@@ -283,51 +295,54 @@ pub fn get_feature_index(
     get_feature_index_on_device(
         &transport.device,
         transport.device_index,
-        transport.sw_id,
+        DEFAULT_SW_ID,
         feature_id,
     )
 }
 
-pub fn read_battery(transport: &HidppTransport) -> Result<Option<BatteryStatus>, HidppError> {
-    let unified_index = get_feature_index(transport, FEATURE_UNIFIED_BATTERY)?;
-    let unified_result = match unified_index {
-        Some(feature_index) => query_battery_on_device(
-            &transport.device,
-            transport.device_index,
-            transport.sw_id,
-            feature_index,
-            0x01,
-            parse_unified_battery,
-        ),
-        None => Ok(None),
-    };
+impl BatteryDevice for HidppTransport {
+    fn selected_feature(&self) -> BatteryFeature {
+        self.battery_feature
+    }
 
-    resolve_unified_result(unified_result, || {
-        let Some(feature_index) = get_feature_index(transport, FEATURE_BATTERY_STATUS)? else {
-            return Ok(None);
+    fn discover_feature(&self, feature_id: u16) -> Result<Option<u8>, HidppError> {
+        get_feature_index(self, feature_id)
+    }
+
+    fn query_feature(&self, feature: BatteryFeature) -> Result<Option<BatteryStatus>, HidppError> {
+        let (feature_index, function, parser) = match feature {
+            BatteryFeature::Unified(index) => (index, 0x01, parse_unified_battery as _),
+            BatteryFeature::Legacy(index) => (index, 0x00, parse_battery_status as _),
         };
         query_battery_on_device(
-            &transport.device,
-            transport.device_index,
-            transport.sw_id,
+            &self.device,
+            self.device_index,
+            DEFAULT_SW_ID,
             feature_index,
-            0x00,
-            parse_battery_status,
+            function,
+            parser,
         )
-    })
+    }
 }
 
-fn resolve_unified_result<F>(
-    unified_result: Result<Option<BatteryStatus>, HidppError>,
-    legacy_query: F,
-) -> Result<Option<BatteryStatus>, HidppError>
-where
-    F: FnOnce() -> Result<Option<BatteryStatus>, HidppError>,
-{
+fn read_battery_from<T: BatteryDevice>(transport: &T) -> Result<Option<BatteryStatus>, HidppError> {
+    let selected_feature = transport.selected_feature();
+    if matches!(selected_feature, BatteryFeature::Legacy(_)) {
+        return transport.query_feature(selected_feature);
+    }
+
+    let unified_result = transport.query_feature(selected_feature);
+    let query_legacy = || {
+        let Some(feature_index) = transport.discover_feature(FEATURE_BATTERY_STATUS)? else {
+            return Ok(None);
+        };
+        transport.query_feature(BatteryFeature::Legacy(feature_index))
+    };
+
     match unified_result {
         Ok(Some(status)) => Ok(Some(status)),
-        Ok(None) => legacy_query(),
-        Err(error @ HidppError::Protocol(_)) => match legacy_query() {
+        Ok(None) => query_legacy(),
+        Err(error @ HidppError::Protocol(_)) => match query_legacy() {
             Ok(Some(status)) => Ok(Some(status)),
             Ok(None) | Err(HidppError::Protocol(_)) => Err(error),
             Err(legacy_error @ (HidppError::Hid(_) | HidppError::ShortWrite { .. })) => {
@@ -336,6 +351,10 @@ where
         },
         Err(error) => Err(error),
     }
+}
+
+pub fn read_battery(transport: &HidppTransport) -> Result<Option<BatteryStatus>, HidppError> {
+    read_battery_from(transport)
 }
 
 fn candidate_interfaces(api: &HidApi) -> Vec<&hidapi::DeviceInfo> {
@@ -353,17 +372,19 @@ fn candidate_interfaces(api: &HidApi) -> Vec<&hidapi::DeviceInfo> {
     candidates
 }
 
-fn supports_battery(device: &HidDevice, device_index: u8) -> Result<bool, HidppError> {
+fn find_battery_feature(
+    device: &HidDevice,
+    device_index: u8,
+) -> Result<Option<BatteryFeature>, HidppError> {
     let unified =
         get_feature_index_on_device(device, device_index, DEFAULT_SW_ID, FEATURE_UNIFIED_BATTERY)?;
-    if unified.is_some() {
-        return Ok(true);
+    if let Some(feature_index) = unified {
+        return Ok(Some(BatteryFeature::Unified(feature_index)));
     }
 
-    Ok(
-        get_feature_index_on_device(device, device_index, DEFAULT_SW_ID, FEATURE_BATTERY_STATUS)?
-            .is_some(),
-    )
+    let legacy =
+        get_feature_index_on_device(device, device_index, DEFAULT_SW_ID, FEATURE_BATTERY_STATUS)?;
+    Ok(legacy.map(BatteryFeature::Legacy))
 }
 
 pub fn open_first_working_transport(api: &HidApi) -> Result<Option<HidppTransport>, HidppError> {
@@ -382,15 +403,15 @@ pub fn open_first_working_transport(api: &HidApi) -> Result<Option<HidppTranspor
         }
 
         for &device_index in DEVICE_INDEX_CANDIDATES {
-            match supports_battery(&device, device_index) {
-                Ok(true) => {
+            match find_battery_feature(&device, device_index) {
+                Ok(Some(battery_feature)) => {
                     return Ok(Some(HidppTransport {
                         device,
                         device_index,
-                        sw_id: DEFAULT_SW_ID,
+                        battery_feature,
                     }))
                 }
-                Ok(false) => {}
+                Ok(None) => {}
                 Err(error) => last_error = Some(error),
             }
         }
@@ -403,7 +424,76 @@ pub fn open_first_working_transport(api: &HidApi) -> Result<Option<HidppTranspor
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
     use super::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum TransportCall {
+        Discover(u16),
+        Query(BatteryFeature),
+    }
+
+    struct FakeTransport {
+        selected_feature: BatteryFeature,
+        feature_results: RefCell<VecDeque<Result<Option<u8>, HidppError>>>,
+        query_results: RefCell<VecDeque<Result<Option<BatteryStatus>, HidppError>>>,
+        calls: RefCell<Vec<TransportCall>>,
+    }
+
+    impl FakeTransport {
+        fn new(
+            selected_feature: BatteryFeature,
+            feature_results: Vec<Result<Option<u8>, HidppError>>,
+            query_results: Vec<Result<Option<BatteryStatus>, HidppError>>,
+        ) -> Self {
+            Self {
+                selected_feature,
+                feature_results: RefCell::new(feature_results.into()),
+                query_results: RefCell::new(query_results.into()),
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> Vec<TransportCall> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl BatteryDevice for FakeTransport {
+        fn selected_feature(&self) -> BatteryFeature {
+            self.selected_feature
+        }
+
+        fn discover_feature(&self, feature_id: u16) -> Result<Option<u8>, HidppError> {
+            self.calls
+                .borrow_mut()
+                .push(TransportCall::Discover(feature_id));
+            self.feature_results
+                .borrow_mut()
+                .pop_front()
+                .expect("fake feature result should be configured")
+        }
+
+        fn query_feature(
+            &self,
+            feature: BatteryFeature,
+        ) -> Result<Option<BatteryStatus>, HidppError> {
+            self.calls.borrow_mut().push(TransportCall::Query(feature));
+            self.query_results
+                .borrow_mut()
+                .pop_front()
+                .expect("fake query result should be configured")
+        }
+    }
+
+    fn short_response_error() -> HidppError {
+        HidppError::Protocol(ProtocolError::ShortResponse {
+            minimum: 8,
+            actual: 7,
+        })
+    }
 
     #[test]
     fn parses_root_feature_index_from_byte_four() {
@@ -500,31 +590,80 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_legacy_for_unified_protocol_error() {
+    fn uses_the_discovered_feature_without_rediscovery() {
         let status = BatteryStatus {
             level: 78,
             charging: true,
         };
-        let result = resolve_unified_result(
-            Err(HidppError::Protocol(ProtocolError::ShortResponse {
-                minimum: 8,
-                actual: 7,
-            })),
-            || Ok(Some(status)),
+        for selected_feature in [BatteryFeature::Unified(5), BatteryFeature::Legacy(6)] {
+            let transport =
+                FakeTransport::new(selected_feature, Vec::new(), vec![Ok(Some(status))]);
+
+            let result = read_battery_from(&transport);
+
+            assert!(matches!(result, Ok(Some(found)) if found == status));
+            assert_eq!(
+                transport.calls(),
+                vec![TransportCall::Query(selected_feature)]
+            );
+        }
+    }
+
+    #[test]
+    fn unified_protocol_error_discovers_and_queries_legacy() {
+        let status = BatteryStatus {
+            level: 42,
+            charging: false,
+        };
+        let transport = FakeTransport::new(
+            BatteryFeature::Unified(5),
+            vec![Ok(Some(6))],
+            vec![Err(short_response_error()), Ok(Some(status))],
         );
 
+        let result = read_battery_from(&transport);
+
         assert!(matches!(result, Ok(Some(found)) if found == status));
+        assert_eq!(
+            transport.calls(),
+            vec![
+                TransportCall::Query(BatteryFeature::Unified(5)),
+                TransportCall::Discover(FEATURE_BATTERY_STATUS),
+                TransportCall::Query(BatteryFeature::Legacy(6)),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_unified_response_discovers_and_queries_legacy() {
+        let transport = FakeTransport::new(
+            BatteryFeature::Unified(5),
+            vec![Ok(Some(6))],
+            vec![Ok(None), Ok(None)],
+        );
+
+        let result = read_battery_from(&transport);
+
+        assert!(matches!(result, Ok(None)));
+        assert_eq!(
+            transport.calls(),
+            vec![
+                TransportCall::Query(BatteryFeature::Unified(5)),
+                TransportCall::Discover(FEATURE_BATTERY_STATUS),
+                TransportCall::Query(BatteryFeature::Legacy(6)),
+            ]
+        );
     }
 
     #[test]
     fn preserves_unified_protocol_error_when_legacy_is_unavailable() {
-        let result = resolve_unified_result(
-            Err(HidppError::Protocol(ProtocolError::ShortResponse {
-                minimum: 8,
-                actual: 7,
-            })),
-            || Ok(None),
+        let transport = FakeTransport::new(
+            BatteryFeature::Unified(5),
+            vec![Ok(None)],
+            vec![Err(short_response_error())],
         );
+
+        let result = read_battery_from(&transport);
 
         assert!(matches!(
             result,
@@ -533,38 +672,57 @@ mod tests {
                 actual: 7,
             }))
         ));
+        assert_eq!(
+            transport.calls(),
+            vec![
+                TransportCall::Query(BatteryFeature::Unified(5)),
+                TransportCall::Discover(FEATURE_BATTERY_STATUS),
+            ]
+        );
     }
 
     #[test]
-    fn preserves_legacy_hid_error_after_unified_protocol_error() {
-        let result = resolve_unified_result(
-            Err(HidppError::Protocol(ProtocolError::ShortResponse {
-                minimum: 8,
-                actual: 7,
-            })),
-            || Err(HidppError::Hid(HidError::InitializationError)),
+    fn returns_legacy_transport_error_after_unified_protocol_error() {
+        let transport = FakeTransport::new(
+            BatteryFeature::Unified(5),
+            vec![Ok(Some(6))],
+            vec![
+                Err(short_response_error()),
+                Err(HidppError::Hid(HidError::InitializationError)),
+            ],
         );
+
+        let result = read_battery_from(&transport);
 
         assert!(matches!(
             result,
             Err(HidppError::Hid(HidError::InitializationError))
         ));
+        assert_eq!(
+            transport.calls(),
+            vec![
+                TransportCall::Query(BatteryFeature::Unified(5)),
+                TransportCall::Discover(FEATURE_BATTERY_STATUS),
+                TransportCall::Query(BatteryFeature::Legacy(6)),
+            ]
+        );
     }
 
     #[test]
-    fn preserves_legacy_short_write_after_unified_protocol_error() {
-        let result = resolve_unified_result(
-            Err(HidppError::Protocol(ProtocolError::ShortResponse {
-                minimum: 8,
-                actual: 7,
-            })),
-            || {
+    fn returns_legacy_short_write_after_unified_protocol_error() {
+        let transport = FakeTransport::new(
+            BatteryFeature::Unified(5),
+            vec![Ok(Some(6))],
+            vec![
+                Err(short_response_error()),
                 Err(HidppError::ShortWrite {
                     expected: 7,
                     actual: 3,
-                })
-            },
+                }),
+            ],
         );
+
+        let result = read_battery_from(&transport);
 
         assert!(matches!(
             result,
@@ -573,39 +731,47 @@ mod tests {
                 actual: 3,
             })
         ));
+        assert_eq!(
+            transport.calls(),
+            vec![
+                TransportCall::Query(BatteryFeature::Unified(5)),
+                TransportCall::Discover(FEATURE_BATTERY_STATUS),
+                TransportCall::Query(BatteryFeature::Legacy(6)),
+            ]
+        );
     }
 
     #[test]
-    fn does_not_fall_back_for_hid_io_error() {
-        let mut legacy_called = false;
-        let result =
-            resolve_unified_result(Err(HidppError::Hid(HidError::InitializationError)), || {
-                legacy_called = true;
-                Ok(None)
-            });
+    fn does_not_fall_back_after_unified_hid_error() {
+        let transport = FakeTransport::new(
+            BatteryFeature::Unified(5),
+            Vec::new(),
+            vec![Err(HidppError::Hid(HidError::InitializationError))],
+        );
 
-        assert!(!legacy_called);
         assert!(matches!(
-            result,
+            read_battery_from(&transport),
             Err(HidppError::Hid(HidError::InitializationError))
         ));
+        assert_eq!(
+            transport.calls(),
+            vec![TransportCall::Query(BatteryFeature::Unified(5))]
+        );
     }
 
     #[test]
-    fn does_not_fall_back_for_short_write() {
-        let mut legacy_called = false;
-        let result = resolve_unified_result(
-            Err(HidppError::ShortWrite {
+    fn does_not_fall_back_after_unified_transport_failure() {
+        let transport = FakeTransport::new(
+            BatteryFeature::Unified(5),
+            Vec::new(),
+            vec![Err(HidppError::ShortWrite {
                 expected: 7,
                 actual: 3,
-            }),
-            || {
-                legacy_called = true;
-                Ok(None)
-            },
+            })],
         );
 
-        assert!(!legacy_called);
+        let result = read_battery_from(&transport);
+
         assert!(matches!(
             result,
             Err(HidppError::ShortWrite {
@@ -613,5 +779,9 @@ mod tests {
                 actual: 3,
             })
         ));
+        assert_eq!(
+            transport.calls(),
+            vec![TransportCall::Query(BatteryFeature::Unified(5))]
+        );
     }
 }
