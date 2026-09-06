@@ -56,7 +56,7 @@ gbat
 命令会向 stdout 输出一行电池状态。错误写入 stderr，并返回非零退出状态，因此可以直接用于脚本。
 
 <p align="center">
-  <img src="assets/demo.gif" alt="gbat CLI 演示" width="700">
+  <img src="assets/demo.gif" alt="gbat version, battery output, and Raycast script demo" width="700">
 </p>
 
 ## Raycast

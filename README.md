@@ -59,7 +59,7 @@ The command writes one battery status line to stdout. Errors go to stderr and
 return a non-zero exit status, so the output can be used in scripts.
 
 <p align="center">
-  <img src="assets/demo.gif" alt="gbat CLI demo" width="700">
+  <img src="assets/demo.gif" alt="gbat version, battery output, and Raycast script demo" width="700">
 </p>
 
 ## Raycast

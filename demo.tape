@@ -1,3 +1,5 @@
+Require cargo
+
 Output assets/demo.gif
 Set Shell "zsh"
 Set FontSize 28
@@ -12,6 +14,12 @@ Set TypingSpeed 45ms
 Set CursorBlink false
 
 Hide
+Type@0ms "cargo build --release"
+Enter
+Wait
+# Replay the original battery sample; read the version from the current build.
+Type@0ms `export GBAT_DEMO_BINARY="$PWD/target/release/gbat" GBAT_BINARY="$PWD/docs/demo-gbat.sh"; function gbat() { "$GBAT_BINARY" "$@"; }`
+Enter
 Type "clear" Enter
 Sleep 500ms
 Show
