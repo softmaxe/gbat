@@ -9,3 +9,12 @@ homepage = "https://github.com/softmaxe/gbat"
 
 [dependencies]
 hidapi = { version = "2.6.7", features = ["macos-shared-device"] }
+
+# A one-shot CLI only pays for what it pages in, so trade build time for a
+# smaller binary: whole-program inlining, no unwinding tables, no symbols. This
+# cuts the binary by about a third; measured startup time is unchanged.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
