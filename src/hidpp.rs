@@ -15,13 +15,17 @@ pub const REPORT_ID_LONG: u8 = 0x11;
 pub const REPORT_ID_ERROR: u8 = 0x8F;
 pub const DEFAULT_SW_ID: u8 = 0x0F;
 
-pub const DEVICE_INDEX_CANDIDATES: &[u8] = &[1, 2, 3, 4, 5, 6, 0xFF];
+/// Receiver-paired devices answer on 1..=6 and a directly connected device on
+/// 0xFF, so probe both common slots before the rarely used ones.
+pub const DEVICE_INDEX_CANDIDATES: &[u8] = &[1, 0xFF, 2, 3, 4, 5, 6];
 
 const REPORT_BUFFER_LEN: usize = 20;
-const FLUSH_TIMEOUT_MS: i32 = 50;
 const FLUSH_WINDOW: Duration = Duration::from_millis(200);
 const RESPONSE_TIMEOUT: Duration = Duration::from_millis(1_500);
-const RESPONSE_READ_SLICE_MS: i32 = 100;
+/// Upper bound for probing every interface and device index. A paired but
+/// unavailable index answers with an error report instead of falling silent, so
+/// this budget only caps interfaces that never answer at all.
+const DISCOVERY_BUDGET: Duration = Duration::from_secs(6);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BatteryStatus {
@@ -92,6 +96,22 @@ impl From<ProtocolError> for HidppError {
     fn from(error: ProtocolError) -> Self {
         Self::Protocol(error)
     }
+}
+
+/// What a single HID++ request produced.
+enum Reply {
+    Response(Vec<u8>),
+    /// The device index exists but rejected the request.
+    DeviceError,
+    /// Nothing answered within the timeout.
+    Silence,
+}
+
+/// Outcome of a root-feature lookup.
+enum FeatureLookup {
+    Index(u8),
+    Unsupported,
+    Silent,
 }
 
 pub struct HidppTransport {
@@ -170,26 +190,37 @@ fn validate_response(
     Ok(())
 }
 
+/// Discard reports that arrived before the current request. Queued reports are
+/// already available, so this never waits for new ones.
 fn flush(device: &HidDevice) -> Result<(), HidppError> {
     let deadline = Instant::now() + FLUSH_WINDOW;
     let mut buffer = [0_u8; REPORT_BUFFER_LEN];
     while Instant::now() < deadline {
-        if device.read_timeout(&mut buffer, FLUSH_TIMEOUT_MS)? == 0 {
+        if device.read_timeout(&mut buffer, 0)? == 0 {
             break;
         }
     }
     Ok(())
 }
 
+fn function_byte(function: u8, sw_id: u8) -> u8 {
+    ((function & 0x0F) << 4) | (sw_id & 0x0F)
+}
+
+/// Remaining time for one request, capped at the per-request timeout.
+fn request_timeout(deadline: Instant) -> Duration {
+    deadline
+        .saturating_duration_since(Instant::now())
+        .min(RESPONSE_TIMEOUT)
+}
+
 fn send_short(
     device: &HidDevice,
     device_index: u8,
     feature_index: u8,
-    function: u8,
-    sw_id: u8,
+    function_byte: u8,
     payload: [u8; 3],
 ) -> Result<(), HidppError> {
-    let function_byte = ((function & 0x0F) << 4) | (sw_id & 0x0F);
     let report = [
         REPORT_ID_SHORT,
         device_index,
@@ -209,12 +240,20 @@ fn send_short(
     Ok(())
 }
 
-fn response_matches(response: &[u8], device_index: u8, feature_index: u8) -> bool {
+/// A HID++ 2.0 reply echoes the request's function and software ID, so matching
+/// that byte too rejects stale reports and replies meant for another reader.
+fn response_matches(
+    response: &[u8],
+    device_index: u8,
+    feature_index: u8,
+    function_byte: u8,
+) -> bool {
     matches!(
         response.first(),
         Some(&REPORT_ID_SHORT) | Some(&REPORT_ID_LONG)
     ) && response.get(1) == Some(&device_index)
         && response.get(2) == Some(&feature_index)
+        && response.get(3) == Some(&function_byte)
 }
 
 fn error_response_matches(response: &[u8], device_index: u8) -> bool {
@@ -225,28 +264,44 @@ fn read_response(
     device: &HidDevice,
     device_index: u8,
     feature_index: u8,
-) -> Result<Option<Vec<u8>>, HidppError> {
-    let deadline = Instant::now() + RESPONSE_TIMEOUT;
+    function_byte: u8,
+    timeout: Duration,
+) -> Result<Reply, HidppError> {
+    let deadline = Instant::now() + timeout;
     let mut buffer = [0_u8; REPORT_BUFFER_LEN];
-    while Instant::now() < deadline {
+    loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let timeout_ms = remaining.as_millis().min(RESPONSE_READ_SLICE_MS as u128) as i32;
-        if timeout_ms == 0 {
-            break;
-        }
+        let timeout_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
         let length = device.read_timeout(&mut buffer, timeout_ms)?;
-        if length == 0 {
-            continue;
+        if length > 0 {
+            let response = &buffer[..length];
+            if error_response_matches(response, device_index) {
+                return Ok(Reply::DeviceError);
+            }
+            if response_matches(response, device_index, feature_index, function_byte) {
+                return Ok(Reply::Response(response.to_vec()));
+            }
         }
-        let response = &buffer[..length];
-        if error_response_matches(response, device_index) {
-            return Ok(None);
-        }
-        if response_matches(response, device_index, feature_index) {
-            return Ok(Some(response.to_vec()));
+        if Instant::now() >= deadline {
+            return Ok(Reply::Silence);
         }
     }
-    Ok(None)
+}
+
+/// Send one short request and wait for its reply.
+fn request(
+    device: &HidDevice,
+    device_index: u8,
+    feature_index: u8,
+    function: u8,
+    sw_id: u8,
+    payload: [u8; 3],
+    timeout: Duration,
+) -> Result<Reply, HidppError> {
+    let function_byte = function_byte(function, sw_id);
+    flush(device)?;
+    send_short(device, device_index, feature_index, function_byte, payload)?;
+    read_response(device, device_index, feature_index, function_byte, timeout)
 }
 
 fn get_feature_index_on_device(
@@ -254,21 +309,25 @@ fn get_feature_index_on_device(
     device_index: u8,
     sw_id: u8,
     feature_id: u16,
-) -> Result<Option<u8>, HidppError> {
-    flush(device)?;
-    send_short(
+    timeout: Duration,
+) -> Result<FeatureLookup, HidppError> {
+    let reply = request(
         device,
         device_index,
         FEATURE_ROOT as u8,
         0,
         sw_id,
         [(feature_id >> 8) as u8, feature_id as u8, 0],
+        timeout,
     )?;
-    let response = match read_response(device, device_index, FEATURE_ROOT as u8)? {
-        Some(response) => response,
-        None => return Ok(None),
-    };
-    Ok(parse_feature_index(&response)?)
+    Ok(match reply {
+        Reply::Response(response) => match parse_feature_index(&response)? {
+            Some(feature_index) => FeatureLookup::Index(feature_index),
+            None => FeatureLookup::Unsupported,
+        },
+        Reply::DeviceError => FeatureLookup::Unsupported,
+        Reply::Silence => FeatureLookup::Silent,
+    })
 }
 
 fn query_battery_on_device(
@@ -279,25 +338,36 @@ fn query_battery_on_device(
     function: u8,
     parse_response: fn(&[u8]) -> Result<BatteryStatus, ProtocolError>,
 ) -> Result<Option<BatteryStatus>, HidppError> {
-    flush(device)?;
-    send_short(device, device_index, feature_index, function, sw_id, [0; 3])?;
-    let response = match read_response(device, device_index, feature_index)? {
-        Some(response) => response,
-        None => return Ok(None),
-    };
-    Ok(Some(parse_response(&response)?))
+    let reply = request(
+        device,
+        device_index,
+        feature_index,
+        function,
+        sw_id,
+        [0; 3],
+        RESPONSE_TIMEOUT,
+    )?;
+    match reply {
+        Reply::Response(response) => Ok(Some(parse_response(&response)?)),
+        Reply::DeviceError | Reply::Silence => Ok(None),
+    }
 }
 
 pub fn get_feature_index(
     transport: &HidppTransport,
     feature_id: u16,
 ) -> Result<Option<u8>, HidppError> {
-    get_feature_index_on_device(
+    let lookup = get_feature_index_on_device(
         &transport.device,
         transport.device_index,
         DEFAULT_SW_ID,
         feature_id,
-    )
+        RESPONSE_TIMEOUT,
+    )?;
+    Ok(match lookup {
+        FeatureLookup::Index(feature_index) => Some(feature_index),
+        FeatureLookup::Unsupported | FeatureLookup::Silent => None,
+    })
 }
 
 impl BatteryDevice for HidppTransport {
@@ -375,41 +445,104 @@ fn candidate_interfaces(api: &HidApi) -> Vec<&hidapi::DeviceInfo> {
 fn find_battery_feature(
     device: &HidDevice,
     device_index: u8,
+    deadline: Instant,
 ) -> Result<Option<BatteryFeature>, HidppError> {
-    let unified =
-        get_feature_index_on_device(device, device_index, DEFAULT_SW_ID, FEATURE_UNIFIED_BATTERY)?;
-    if let Some(feature_index) = unified {
-        return Ok(Some(BatteryFeature::Unified(feature_index)));
+    let unified = get_feature_index_on_device(
+        device,
+        device_index,
+        DEFAULT_SW_ID,
+        FEATURE_UNIFIED_BATTERY,
+        request_timeout(deadline),
+    )?;
+    match unified {
+        FeatureLookup::Index(feature_index) => {
+            return Ok(Some(BatteryFeature::Unified(feature_index)))
+        }
+        // Every HID++ 2.0 device answers root feature lookups, so silence means
+        // this index is absent and the legacy lookup would only wait again.
+        FeatureLookup::Silent => return Ok(None),
+        FeatureLookup::Unsupported => {}
     }
 
-    let legacy =
-        get_feature_index_on_device(device, device_index, DEFAULT_SW_ID, FEATURE_BATTERY_STATUS)?;
-    Ok(legacy.map(BatteryFeature::Legacy))
+    let legacy = get_feature_index_on_device(
+        device,
+        device_index,
+        DEFAULT_SW_ID,
+        FEATURE_BATTERY_STATUS,
+        request_timeout(deadline),
+    )?;
+    Ok(match legacy {
+        FeatureLookup::Index(feature_index) => Some(BatteryFeature::Legacy(feature_index)),
+        FeatureLookup::Unsupported | FeatureLookup::Silent => None,
+    })
+}
+
+/// A probed interface, opened on first use and reused across device indices.
+enum ProbeSlot {
+    Unopened,
+    Open(HidDevice),
+    Failed,
+}
+
+fn open_probe_device(api: &HidApi, info: &hidapi::DeviceInfo) -> Result<HidDevice, HidppError> {
+    let device = api.open_path(info.path())?;
+    device.set_blocking_mode(false)?;
+    Ok(device)
+}
+
+fn probe_device<'slot>(
+    api: &HidApi,
+    info: &hidapi::DeviceInfo,
+    slot: &'slot mut ProbeSlot,
+    last_error: &mut Option<HidppError>,
+) -> Option<&'slot HidDevice> {
+    if matches!(slot, ProbeSlot::Unopened) {
+        *slot = match open_probe_device(api, info) {
+            Ok(device) => ProbeSlot::Open(device),
+            Err(error) => {
+                *last_error = Some(error);
+                ProbeSlot::Failed
+            }
+        };
+    }
+    match slot {
+        ProbeSlot::Open(device) => Some(device),
+        ProbeSlot::Unopened | ProbeSlot::Failed => None,
+    }
 }
 
 pub fn open_first_working_transport(api: &HidApi) -> Result<Option<HidppTransport>, HidppError> {
+    let candidates = candidate_interfaces(api);
+    let mut slots = candidates
+        .iter()
+        .map(|_| ProbeSlot::Unopened)
+        .collect::<Vec<_>>();
     let mut last_error = None;
-    for candidate in candidate_interfaces(api) {
-        let device = match api.open_path(candidate.path()) {
-            Ok(device) => device,
-            Err(error) => {
-                last_error = Some(error.into());
-                continue;
-            }
-        };
-        if let Err(error) = device.set_blocking_mode(false) {
-            last_error = Some(error.into());
-            continue;
-        }
+    let deadline = Instant::now() + DISCOVERY_BUDGET;
 
-        for &device_index in DEVICE_INDEX_CANDIDATES {
-            match find_battery_feature(&device, device_index) {
+    // Probe index-major: the likely indices on every interface come before the
+    // unlikely ones on the first interface.
+    'probe: for &device_index in DEVICE_INDEX_CANDIDATES {
+        for slot in 0..candidates.len() {
+            if Instant::now() >= deadline {
+                break 'probe;
+            }
+            let Some(device) =
+                probe_device(api, candidates[slot], &mut slots[slot], &mut last_error)
+            else {
+                continue;
+            };
+            match find_battery_feature(device, device_index, deadline) {
                 Ok(Some(battery_feature)) => {
-                    return Ok(Some(HidppTransport {
-                        device,
-                        device_index,
-                        battery_feature,
-                    }))
+                    if let ProbeSlot::Open(device) =
+                        std::mem::replace(&mut slots[slot], ProbeSlot::Failed)
+                    {
+                        return Ok(Some(HidppTransport {
+                            device,
+                            device_index,
+                            battery_feature,
+                        }));
+                    }
                 }
                 Ok(None) => {}
                 Err(error) => last_error = Some(error),
@@ -579,7 +712,30 @@ mod tests {
     #[test]
     fn rejects_response_for_another_device_index() {
         let response = [REPORT_ID_SHORT, 2, 5, 0x1F, 78, 0, 0, 1];
-        assert!(!response_matches(&response, 1, 5));
+        assert!(!response_matches(&response, 1, 5, 0x1F));
+        assert!(response_matches(&response, 2, 5, 0x1F));
+    }
+
+    #[test]
+    fn rejects_response_echoing_another_function_or_software_id() {
+        let response = [REPORT_ID_SHORT, 1, 5, 0x1F, 78, 0, 0, 1];
+        assert!(!response_matches(&response, 1, 5, 0x0F));
+        assert!(!response_matches(&response, 1, 5, 0x1E));
+    }
+
+    #[test]
+    fn builds_function_byte_from_function_and_software_id() {
+        assert_eq!(function_byte(0x01, DEFAULT_SW_ID), 0x1F);
+        assert_eq!(function_byte(0x00, DEFAULT_SW_ID), 0x0F);
+    }
+
+    #[test]
+    fn caps_request_timeout_at_the_response_timeout() {
+        assert_eq!(
+            request_timeout(Instant::now() + DISCOVERY_BUDGET),
+            RESPONSE_TIMEOUT
+        );
+        assert_eq!(request_timeout(Instant::now()), Duration::ZERO);
     }
 
     #[test]
