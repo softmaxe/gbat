@@ -100,7 +100,10 @@ impl From<ProtocolError> for HidppError {
 
 /// What a single HID++ request produced.
 enum Reply {
-    Response(Vec<u8>),
+    Response {
+        buffer: [u8; REPORT_BUFFER_LEN],
+        length: usize,
+    },
     /// The device index exists but rejected the request.
     DeviceError,
     /// Nothing answered within the timeout.
@@ -279,7 +282,7 @@ fn read_response(
                 return Ok(Reply::DeviceError);
             }
             if response_matches(response, device_index, feature_index, function_byte) {
-                return Ok(Reply::Response(response.to_vec()));
+                return Ok(Reply::Response { buffer, length });
             }
         }
         if Instant::now() >= deadline {
@@ -321,7 +324,7 @@ fn get_feature_index_on_device(
         timeout,
     )?;
     Ok(match reply {
-        Reply::Response(response) => match parse_feature_index(&response)? {
+        Reply::Response { buffer, length } => match parse_feature_index(&buffer[..length])? {
             Some(feature_index) => FeatureLookup::Index(feature_index),
             None => FeatureLookup::Unsupported,
         },
@@ -348,7 +351,7 @@ fn query_battery_on_device(
         RESPONSE_TIMEOUT,
     )?;
     match reply {
-        Reply::Response(response) => Ok(Some(parse_response(&response)?)),
+        Reply::Response { buffer, length } => Ok(Some(parse_response(&buffer[..length])?)),
         Reply::DeviceError | Reply::Silence => Ok(None),
     }
 }
