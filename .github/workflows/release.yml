@@ -26,6 +26,10 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No step here uses git, and cargo build scripts are third-party code
+          # that would otherwise be able to read the token out of .git/config.
+          persist-credentials: false
 
       - name: Match tag and Cargo version
         id: version
@@ -65,6 +69,10 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # No step here uses git, and cargo build scripts are third-party code
+          # that would otherwise be able to read the token out of .git/config.
+          persist-credentials: false
 
       - name: Install pinned Rust target
         shell: bash
@@ -340,6 +348,8 @@ jobs:
           repository: softmaxe/homebrew-tap
           ref: main
           path: homebrew-tap
+          # Credentials stay persisted here because the push below needs them,
+          # and every step in this job is first-party shell.
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
       - name: Download tested formula
