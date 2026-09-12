@@ -19,7 +19,7 @@ Battery: 42% (charging)
 - Supports the LIGHTSPEED receiver and a direct USB connection
 - Works in Terminal and Raycast
 - Does not require Logitech G HUB, Python, or a background process
-- Lets separate Terminal and Raycast invocations share HID access
+- Opens HID in shared mode so Terminal and Raycast can invoke it independently
 
 ## Requirements
 
@@ -29,7 +29,7 @@ Battery: 42% (charging)
 
 ## Install
 
-The Homebrew package and GitHub release archive support Apple silicon (`arm64`)
+The Homebrew package and GitHub release archive support Apple Silicon (`arm64`)
 only. The release binaries are unsigned and not notarized, so macOS may require
 approval in System Settings > Privacy & Security.
 
@@ -61,6 +61,8 @@ return a non-zero exit status, so the output can be used in scripts.
 <p align="center">
   <img src="assets/demo.gif" alt="gbat version, battery output, and Raycast script demo" width="700">
 </p>
+
+The GIF was recorded with `gbat 1.0.9`, and the version line identifies that captured build. Current releases use the same `gbat --version`, `gbat`, and Raycast commands shown there.
 
 ## Raycast
 

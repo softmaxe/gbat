@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/gbat-logo.png" alt="gbat logo" width="180">
+  <img src="assets/gbat-logo.png" alt="gbat 标志" width="180">
 </p>
 
 <h1 align="center">gbat</h1>
@@ -19,7 +19,7 @@ Battery: 42% (charging)
 - 支持 LIGHTSPEED 接收器和 USB 直连
 - 可在 Terminal 和 Raycast 中使用
 - 不需要 Logitech G HUB、Python 或后台进程
-- Terminal 和 Raycast 可共享 HID 设备访问
+- 以共享模式打开 HID，Terminal 和 Raycast 可以各自调用
 
 ## 系统要求
 
@@ -53,18 +53,20 @@ brew uninstall gbat
 gbat
 ```
 
-命令会向 stdout 输出一行电池状态。错误写入 stderr，并返回非零退出状态，因此可以直接用于脚本。
+命令向 stdout 输出一行电池状态。错误写入 stderr，并返回非零退出状态，因此可以直接用于脚本。
 
 <p align="center">
-  <img src="assets/demo.gif" alt="gbat version, battery output, and Raycast script demo" width="700">
+  <img src="assets/demo.gif" alt="gbat 版本、电量输出和 Raycast 脚本演示" width="700">
 </p>
+
+GIF 使用 `gbat 1.0.9` 录制，其中的版本行表示录制时的构建版本。当前 Release 仍使用画面中的 `gbat --version`、`gbat` 和 Raycast 命令。
 
 ## Raycast
 
 [`raycast/mouse-battery.sh`](raycast/mouse-battery.sh) 是 Raycast Script Command。在 Raycast Settings 中添加本仓库的 `raycast` 目录，然后运行 `Logitech Mouse Battery`。
 
 <p align="center">
-  <img src="assets/raycast-demo.webp" alt="gbat Raycast 脚本命令演示" width="700">
+  <img src="assets/raycast-demo.webp" alt="gbat Raycast Script Command 演示" width="700">
 </p>
 
 脚本会在 `PATH`、Homebrew 默认目录、`$HOME/.local/bin` 和当前项目中查找 `gbat`。如果可执行文件位于其他位置，请指定路径：
