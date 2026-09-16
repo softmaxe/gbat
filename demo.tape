@@ -14,12 +14,11 @@ Set TypingSpeed 45ms
 Set CursorBlink false
 
 Hide
-Type@0ms "cargo build --release"
+Type@0ms `cargo build --release --locked && export PATH="$PWD/target/release:$PATH" GBAT_BINARY="$PWD/target/release/gbat"`
 Enter
+Wait+Screen@5m /Finished.*release.*target/
 Wait
-# Replay the original battery sample; read the version from the current build.
-Type@0ms `export GBAT_DEMO_BINARY="$PWD/target/release/gbat" GBAT_BINARY="$PWD/docs/demo-gbat.sh"; function gbat() { "$GBAT_BINARY" "$@"; }`
-Enter
+# Both the CLI and Raycast script use this build and read the connected mouse.
 Type "clear" Enter
 Sleep 500ms
 Show
@@ -30,14 +29,17 @@ Sleep 1200ms
 
 # 2 - main battery read
 Type "gbat" Sleep 600ms Enter
+Wait
 Sleep 1500ms
 
 # 3 - Raycast script path
 Type "./raycast/mouse-battery.sh" Sleep 600ms Enter
+Wait
 Sleep 1500ms
 
 # 4 - stdout is scriptable
 Type "echo $(gbat)" Sleep 600ms Enter
+Wait
 Sleep 1500ms
 
 Sleep 2s

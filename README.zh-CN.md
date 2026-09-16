@@ -59,7 +59,9 @@ gbat
   <img src="assets/demo.gif" alt="gbat 版本、电量输出和 Raycast 脚本演示" width="700">
 </p>
 
-GIF 使用 `gbat 1.0.9` 录制，其中的版本行表示录制时的构建版本。当前 Release 仍使用画面中的 `gbat --version`、`gbat` 和 Raycast 命令。
+Recorded with `gbat 1.0.0` and a connected mouse, using real battery readings.
+See [recording details](docs/recording.md) for the source version and
+instructions for updating the media.
 
 ## Raycast
 
