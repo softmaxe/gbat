@@ -62,7 +62,9 @@ return a non-zero exit status, so the output can be used in scripts.
   <img src="assets/demo.gif" alt="gbat version, battery output, and Raycast script demo" width="700">
 </p>
 
-The GIF was recorded with `gbat 1.0.9`, and the version line identifies that captured build. Current releases use the same `gbat --version`, `gbat`, and Raycast commands shown there.
+Recorded with `gbat 1.0.0` and a connected mouse, using real battery readings.
+See [recording details](docs/recording.md) for the source version and
+instructions for updating the media.
 
 ## Raycast
 
