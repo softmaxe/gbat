@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+jobs:
+  check:
+    name: Check aarch64-apple-darwin
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      TARGET: aarch64-apple-darwin
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust target
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add "$TARGET"
+          rustc --version --verbose
+          cargo --version
+
+      - name: Check and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo check --locked --all-targets --target "$TARGET"
+          cargo test --locked --target "$TARGET"
