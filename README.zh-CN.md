@@ -55,6 +55,8 @@ gbat
 
 命令向 stdout 输出一行电池状态。错误写入 stderr，并返回非零退出状态，因此可以直接用于脚本。
 
+一次读取通常只需几十毫秒。鼠标闲置一小段时间后，第一次读取需要等鼠标唤醒无线模块，可能耗时约 1 秒；之后的读取会恢复正常速度。
+
 <p align="center">
   <img src="assets/demo.gif" alt="gbat 版本、电量输出和 Raycast 脚本演示" width="700">
 </p>
@@ -100,6 +102,7 @@ cp target/release/gbat "$HOME/.local/bin/gbat"
 | 问题 | 处理方法 |
 | --- | --- |
 | `No responsive Logitech HID++ interface found` | 连接接收器或 USB 线，唤醒鼠标后重试。 |
+| `The receiver reports no connected mouse` | 鼠标已关机，或闲置几分钟后进入深度休眠。打开鼠标或移动一下后重试。 |
 | `Could not initialize HID access` 或 access error | 从 Terminal 运行一次 `gbat`，并允许 macOS 弹出的权限请求。通常不需要 `sudo`。 |
 | `Battery: 100%` 但没有 `(charging)` | 鼠标充满后可能停止主动充电，这是正常现象。 |
 | macOS 阻止运行 | 打开 System Settings > Privacy & Security，为 `gbat` 选择 Open Anyway。 |
