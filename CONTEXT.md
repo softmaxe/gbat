@@ -15,11 +15,11 @@ The HID++ address of a device: a receiver pairing slot (1–6), or 0xFF for a mo
 _Avoid_: Slot number, device ID
 
 **Offline**:
-The state of a mouse that is paired to the receiver but not currently connected to it, such as when switched off; the receiver answers requests for its device index with an unknown-device error.
+The state of a mouse that is paired to the receiver but not currently connected to it, because it is switched off or in deep sleep; the receiver answers requests for its device index with an unknown-device error, and only moving the mouse brings it back.
 _Avoid_: Unresponsive, disconnected, missing, asleep
 
 **Idle**:
-The state of a connected mouse whose radio is in power saving; it still answers, but only after waking, so the first read is a cold read.
+The state of a connected mouse whose radio is in power saving after a short rest; it still answers, but only after waking, so the first read is a cold read. A mouse left idle long enough goes offline.
 _Avoid_: Asleep, sleeping
 
 **Cold read**:
