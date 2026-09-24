@@ -58,6 +58,10 @@ gbat
 The command writes one battery status line to stdout. Errors go to stderr and
 return a non-zero exit status, so the output can be used in scripts.
 
+A read normally takes a few tens of milliseconds. After the mouse has rested
+for a short while, the first read can take up to about a second while the mouse
+wakes its radio; later reads are fast again.
+
 <p align="center">
   <img src="assets/demo.gif" alt="gbat version, battery output, and Raycast script demo" width="700">
 </p>
@@ -103,6 +107,7 @@ cp target/release/gbat "$HOME/.local/bin/gbat"
 | Problem | What to do |
 | --- | --- |
 | `No responsive Logitech HID++ interface found` | Connect the receiver or USB cable, wake the mouse, and retry. |
+| `The receiver reports no connected mouse` | The mouse is off or in deep sleep after resting for a few minutes. Turn it on or move it, and retry. |
 | `Could not initialize HID access` or an access error | Run `gbat` once from Terminal and approve any macOS permission prompt. `sudo` is not normally required. |
 | `Battery: 100%` without `(charging)` | A full mouse may stop active charging. This is expected. |
 | macOS blocks the binary | Open System Settings > Privacy & Security and choose Open Anyway for `gbat`. |
