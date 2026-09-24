@@ -1,6 +1,6 @@
 use std::process::ExitCode;
 
-use gbat::hidpp::{open_first_working_transport, read_battery, BatteryStatus};
+use gbat::hidpp::{open_first_working_transport, read_battery, BatteryStatus, Discovery};
 use hidapi::HidApi;
 
 fn main() -> ExitCode {
@@ -24,13 +24,10 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let api = HidApi::new().map_err(|error| format!("Could not initialize HID access: {error}"))?;
-    let transport = open_first_working_transport(&api)
-        .map_err(|error| format!("Could not probe Logitech HID++ interface: {error}"))?
-        .ok_or_else(|| {
-            String::from(
-                "No responsive Logitech HID++ interface found. Connect the GPW2 through its LIGHTSPEED receiver or USB, wake it, and retry.",
-            )
-        })?;
+    let transport = found_transport(
+        open_first_working_transport(&api)
+            .map_err(|error| format!("Could not probe Logitech HID++ interface: {error}"))?,
+    )?;
     let status = read_battery(&transport)
         .map_err(|error| format!("Could not read battery level: {error}"))?
         .ok_or_else(|| {
@@ -41,6 +38,18 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+fn found_transport<T>(discovery: Discovery<T>) -> Result<T, String> {
+    match discovery {
+        Discovery::Found(transport) => Ok(transport),
+        Discovery::Offline => Err(String::from(
+            "The receiver reports no connected mouse. Turn the mouse on or wake it, and retry.",
+        )),
+        Discovery::NotFound => Err(String::from(
+            "No responsive Logitech HID++ interface found. Connect the GPW2 through its LIGHTSPEED receiver or USB, wake it, and retry.",
+        )),
+    }
+}
+
 fn format_status(status: BatteryStatus) -> String {
     let level = status.level.min(100);
     let suffix = if status.charging { " (charging)" } else { "" };
@@ -49,8 +58,25 @@ fn format_status(status: BatteryStatus) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_status;
-    use gbat::hidpp::BatteryStatus;
+    use super::{format_status, found_transport};
+    use gbat::hidpp::{BatteryStatus, Discovery};
+
+    #[test]
+    fn explains_an_offline_mouse_separately_from_a_missing_interface() {
+        assert_eq!(
+            found_transport::<()>(Discovery::Offline),
+            Err(String::from(
+                "The receiver reports no connected mouse. Turn the mouse on or wake it, and retry."
+            ))
+        );
+        assert_eq!(
+            found_transport::<()>(Discovery::NotFound),
+            Err(String::from(
+                "No responsive Logitech HID++ interface found. Connect the GPW2 through its LIGHTSPEED receiver or USB, wake it, and retry."
+            ))
+        );
+        assert_eq!(found_transport(Discovery::Found(7)), Ok(7));
+    }
 
     #[test]
     fn formats_battery_status_for_terminal_and_raycast() {
