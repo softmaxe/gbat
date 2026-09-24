@@ -12,7 +12,13 @@ pub const FEATURE_UNIFIED_BATTERY: u16 = 0x1004;
 
 pub const REPORT_ID_SHORT: u8 = 0x10;
 pub const REPORT_ID_LONG: u8 = 0x11;
-pub const REPORT_ID_ERROR: u8 = 0x8F;
+/// Error markers in the third byte of a short or long report: receivers use
+/// the HID++ 1.0 marker and HID++ 2.0 devices use their own.
+const ERROR_MARKER_HIDPP10: u8 = 0x8F;
+const ERROR_MARKER_HIDPP20: u8 = 0xFF;
+/// HID++ 1.0 error code a receiver returns for a device index with no
+/// connected device.
+const ERROR_CODE_UNKNOWN_DEVICE: u8 = 0x08;
 pub const DEFAULT_SW_ID: u8 = 0x0F;
 
 /// Receiver-paired devices answer on 1..=6 and a directly connected device on
@@ -106,6 +112,8 @@ enum Reply {
     },
     /// The device index exists but rejected the request.
     DeviceError,
+    /// The receiver has no connected device at this index.
+    Offline,
     /// Nothing answered within the timeout.
     Silence,
 }
@@ -114,7 +122,23 @@ enum Reply {
 enum FeatureLookup {
     Index(u8),
     Unsupported,
+    Offline,
     Silent,
+}
+
+/// What probing one device index on one interface found.
+enum ProbeOutcome<D> {
+    Found(D),
+    Offline,
+    Absent,
+}
+
+/// What probing every interface and device index found.
+pub enum Discovery<D> {
+    Found(D),
+    /// A receiver answered, but reported no connected mouse.
+    Offline,
+    NotFound,
 }
 
 pub struct HidppTransport {
@@ -166,9 +190,6 @@ fn validate_response(
         .first()
         .copied()
         .ok_or(ProtocolError::EmptyResponse)?;
-    if report_id == REPORT_ID_ERROR {
-        return Err(ProtocolError::ErrorReport);
-    }
     if !matches!(report_id, REPORT_ID_SHORT | REPORT_ID_LONG) {
         return Err(ProtocolError::UnexpectedReportId(report_id));
     }
@@ -177,6 +198,9 @@ fn validate_response(
             minimum: 3,
             actual: response.len(),
         });
+    }
+    if is_error_marker(response[2]) {
+        return Err(ProtocolError::ErrorReport);
     }
     if let Some(expected) = expected_feature {
         let actual = response[2];
@@ -243,24 +267,54 @@ fn send_short(
     Ok(())
 }
 
+fn is_error_marker(byte: u8) -> bool {
+    matches!(byte, ERROR_MARKER_HIDPP10 | ERROR_MARKER_HIDPP20)
+}
+
+/// How a received report relates to the request awaiting a reply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReportMatch {
+    Reply,
+    /// The receiver has no connected device at the requested index.
+    Offline,
+    /// The device rejected the request.
+    DeviceError,
+    Unrelated,
+}
+
 /// A HID++ 2.0 reply echoes the request's function and software ID, so matching
 /// that byte too rejects stale reports and replies meant for another reader.
-fn response_matches(
-    response: &[u8],
+/// An error arrives as an ordinary short or long report whose third byte is
+/// the error marker, followed by the request's feature index, function byte,
+/// and the error code.
+fn match_report(
+    report: &[u8],
     device_index: u8,
     feature_index: u8,
     function_byte: u8,
-) -> bool {
-    matches!(
-        response.first(),
+) -> ReportMatch {
+    let header_matches = matches!(
+        report.first(),
         Some(&REPORT_ID_SHORT) | Some(&REPORT_ID_LONG)
-    ) && response.get(1) == Some(&device_index)
-        && response.get(2) == Some(&feature_index)
-        && response.get(3) == Some(&function_byte)
-}
-
-fn error_response_matches(response: &[u8], device_index: u8) -> bool {
-    response.first() == Some(&REPORT_ID_ERROR) && response.get(1) == Some(&device_index)
+    ) && report.get(1) == Some(&device_index);
+    if !header_matches {
+        return ReportMatch::Unrelated;
+    }
+    match report[2..] {
+        [feature, function, ..] if feature == feature_index && function == function_byte => {
+            ReportMatch::Reply
+        }
+        [marker, feature, function, code, ..]
+            if is_error_marker(marker) && feature == feature_index && function == function_byte =>
+        {
+            if marker == ERROR_MARKER_HIDPP10 && code == ERROR_CODE_UNKNOWN_DEVICE {
+                ReportMatch::Offline
+            } else {
+                ReportMatch::DeviceError
+            }
+        }
+        _ => ReportMatch::Unrelated,
+    }
 }
 
 fn read_response(
@@ -277,12 +331,16 @@ fn read_response(
         let timeout_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
         let length = device.read_timeout(&mut buffer, timeout_ms)?;
         if length > 0 {
-            let response = &buffer[..length];
-            if error_response_matches(response, device_index) {
-                return Ok(Reply::DeviceError);
-            }
-            if response_matches(response, device_index, feature_index, function_byte) {
-                return Ok(Reply::Response { buffer, length });
+            match match_report(
+                &buffer[..length],
+                device_index,
+                feature_index,
+                function_byte,
+            ) {
+                ReportMatch::Reply => return Ok(Reply::Response { buffer, length }),
+                ReportMatch::Offline => return Ok(Reply::Offline),
+                ReportMatch::DeviceError => return Ok(Reply::DeviceError),
+                ReportMatch::Unrelated => {}
             }
         }
         if Instant::now() >= deadline {
@@ -329,6 +387,7 @@ fn get_feature_index_on_device(
             None => FeatureLookup::Unsupported,
         },
         Reply::DeviceError => FeatureLookup::Unsupported,
+        Reply::Offline => FeatureLookup::Offline,
         Reply::Silence => FeatureLookup::Silent,
     })
 }
@@ -352,7 +411,7 @@ fn query_battery_on_device(
     )?;
     match reply {
         Reply::Response { buffer, length } => Ok(Some(parse_response(&buffer[..length])?)),
-        Reply::DeviceError | Reply::Silence => Ok(None),
+        Reply::DeviceError | Reply::Offline | Reply::Silence => Ok(None),
     }
 }
 
@@ -369,7 +428,7 @@ pub fn get_feature_index(
     )?;
     Ok(match lookup {
         FeatureLookup::Index(feature_index) => Some(feature_index),
-        FeatureLookup::Unsupported | FeatureLookup::Silent => None,
+        FeatureLookup::Unsupported | FeatureLookup::Offline | FeatureLookup::Silent => None,
     })
 }
 
@@ -449,7 +508,7 @@ fn find_battery_feature(
     device: &HidDevice,
     device_index: u8,
     deadline: Instant,
-) -> Result<Option<BatteryFeature>, HidppError> {
+) -> Result<ProbeOutcome<BatteryFeature>, HidppError> {
     let unified = get_feature_index_on_device(
         device,
         device_index,
@@ -459,11 +518,12 @@ fn find_battery_feature(
     )?;
     match unified {
         FeatureLookup::Index(feature_index) => {
-            return Ok(Some(BatteryFeature::Unified(feature_index)))
+            return Ok(ProbeOutcome::Found(BatteryFeature::Unified(feature_index)))
         }
+        FeatureLookup::Offline => return Ok(ProbeOutcome::Offline),
         // Every HID++ 2.0 device answers root feature lookups, so silence means
         // this index is absent and the legacy lookup would only wait again.
-        FeatureLookup::Silent => return Ok(None),
+        FeatureLookup::Silent => return Ok(ProbeOutcome::Absent),
         FeatureLookup::Unsupported => {}
     }
 
@@ -475,8 +535,11 @@ fn find_battery_feature(
         request_timeout(deadline),
     )?;
     Ok(match legacy {
-        FeatureLookup::Index(feature_index) => Some(BatteryFeature::Legacy(feature_index)),
-        FeatureLookup::Unsupported | FeatureLookup::Silent => None,
+        FeatureLookup::Index(feature_index) => {
+            ProbeOutcome::Found(BatteryFeature::Legacy(feature_index))
+        }
+        FeatureLookup::Offline => ProbeOutcome::Offline,
+        FeatureLookup::Unsupported | FeatureLookup::Silent => ProbeOutcome::Absent,
     })
 }
 
@@ -493,69 +556,91 @@ fn open_probe_device(api: &HidApi, info: &hidapi::DeviceInfo) -> Result<HidDevic
     Ok(device)
 }
 
+/// The interface in this slot, opened on first use. Only the first failed open
+/// reports its error; later probes skip the slot.
 fn probe_device<'slot>(
     api: &HidApi,
     info: &hidapi::DeviceInfo,
     slot: &'slot mut ProbeSlot,
-    last_error: &mut Option<HidppError>,
-) -> Option<&'slot HidDevice> {
+) -> Result<Option<&'slot HidDevice>, HidppError> {
     if matches!(slot, ProbeSlot::Unopened) {
-        *slot = match open_probe_device(api, info) {
-            Ok(device) => ProbeSlot::Open(device),
+        match open_probe_device(api, info) {
+            Ok(device) => *slot = ProbeSlot::Open(device),
             Err(error) => {
-                *last_error = Some(error);
-                ProbeSlot::Failed
+                *slot = ProbeSlot::Failed;
+                return Err(error);
             }
-        };
+        }
     }
-    match slot {
+    Ok(match slot {
         ProbeSlot::Open(device) => Some(device),
         ProbeSlot::Unopened | ProbeSlot::Failed => None,
+    })
+}
+
+/// Probe index-major: the likely indices on every interface come before the
+/// unlikely ones on the first interface.
+fn discover<D>(
+    interface_count: usize,
+    deadline: Instant,
+    mut probe: impl FnMut(usize, u8) -> Result<ProbeOutcome<D>, HidppError>,
+) -> Result<Discovery<D>, HidppError> {
+    let mut offline = false;
+    let mut last_error = None;
+    'probe: for &device_index in DEVICE_INDEX_CANDIDATES {
+        for interface in 0..interface_count {
+            if Instant::now() >= deadline {
+                break 'probe;
+            }
+            match probe(interface, device_index) {
+                Ok(ProbeOutcome::Found(found)) => return Ok(Discovery::Found(found)),
+                Ok(ProbeOutcome::Offline) => offline = true,
+                Ok(ProbeOutcome::Absent) => {}
+                Err(error) => last_error = Some(error),
+            }
+        }
+    }
+    // The receiver's own report explains the failure better than an error from
+    // another interface.
+    if offline {
+        return Ok(Discovery::Offline);
+    }
+    match last_error {
+        Some(error) => Err(error),
+        None => Ok(Discovery::NotFound),
     }
 }
 
-pub fn open_first_working_transport(api: &HidApi) -> Result<Option<HidppTransport>, HidppError> {
+pub fn open_first_working_transport(api: &HidApi) -> Result<Discovery<HidppTransport>, HidppError> {
     let candidates = candidate_interfaces(api);
     let mut slots = candidates
         .iter()
         .map(|_| ProbeSlot::Unopened)
         .collect::<Vec<_>>();
-    let mut last_error = None;
     let deadline = Instant::now() + DISCOVERY_BUDGET;
 
-    // Probe index-major: the likely indices on every interface come before the
-    // unlikely ones on the first interface.
-    'probe: for &device_index in DEVICE_INDEX_CANDIDATES {
-        for slot in 0..candidates.len() {
-            if Instant::now() >= deadline {
-                break 'probe;
+    discover(candidates.len(), deadline, |interface, device_index| {
+        let Some(device) = probe_device(api, candidates[interface], &mut slots[interface])? else {
+            return Ok(ProbeOutcome::Absent);
+        };
+        let outcome = match find_battery_feature(device, device_index, deadline)? {
+            ProbeOutcome::Found(battery_feature) => {
+                let ProbeSlot::Open(device) =
+                    std::mem::replace(&mut slots[interface], ProbeSlot::Failed)
+                else {
+                    return Ok(ProbeOutcome::Absent);
+                };
+                ProbeOutcome::Found(HidppTransport {
+                    device,
+                    device_index,
+                    battery_feature,
+                })
             }
-            let Some(device) =
-                probe_device(api, candidates[slot], &mut slots[slot], &mut last_error)
-            else {
-                continue;
-            };
-            match find_battery_feature(device, device_index, deadline) {
-                Ok(Some(battery_feature)) => {
-                    if let ProbeSlot::Open(device) =
-                        std::mem::replace(&mut slots[slot], ProbeSlot::Failed)
-                    {
-                        return Ok(Some(HidppTransport {
-                            device,
-                            device_index,
-                            battery_feature,
-                        }));
-                    }
-                }
-                Ok(None) => {}
-                Err(error) => last_error = Some(error),
-            }
-        }
-    }
-    match last_error {
-        Some(error) => Err(error),
-        None => Ok(None),
-    }
+            ProbeOutcome::Offline => ProbeOutcome::Offline,
+            ProbeOutcome::Absent => ProbeOutcome::Absent,
+        };
+        Ok(outcome)
+    })
 }
 
 #[cfg(test)]
@@ -669,9 +754,18 @@ mod tests {
 
     #[test]
     fn rejects_error_report() {
-        let response = [REPORT_ID_ERROR, 1, 0, 0x0F];
+        let response = [REPORT_ID_SHORT, 1, 0x8F, 0x00, 0x0F, 0x08, 0x00];
         assert_eq!(
             parse_feature_index(&response),
+            Err(ProtocolError::ErrorReport)
+        );
+    }
+
+    #[test]
+    fn rejects_hidpp20_error_report_as_battery_status() {
+        let response = [REPORT_ID_SHORT, 1, 0xFF, 0x05, 0x1F, 0x02, 0x00];
+        assert_eq!(
+            parse_unified_battery(&response),
             Err(ProtocolError::ErrorReport)
         );
     }
@@ -715,15 +809,15 @@ mod tests {
     #[test]
     fn rejects_response_for_another_device_index() {
         let response = [REPORT_ID_SHORT, 2, 5, 0x1F, 78, 0, 0, 1];
-        assert!(!response_matches(&response, 1, 5, 0x1F));
-        assert!(response_matches(&response, 2, 5, 0x1F));
+        assert_eq!(match_report(&response, 1, 5, 0x1F), ReportMatch::Unrelated);
+        assert_eq!(match_report(&response, 2, 5, 0x1F), ReportMatch::Reply);
     }
 
     #[test]
     fn rejects_response_echoing_another_function_or_software_id() {
         let response = [REPORT_ID_SHORT, 1, 5, 0x1F, 78, 0, 0, 1];
-        assert!(!response_matches(&response, 1, 5, 0x0F));
-        assert!(!response_matches(&response, 1, 5, 0x1E));
+        assert_eq!(match_report(&response, 1, 5, 0x0F), ReportMatch::Unrelated);
+        assert_eq!(match_report(&response, 1, 5, 0x1E), ReportMatch::Unrelated);
     }
 
     #[test]
@@ -741,11 +835,94 @@ mod tests {
         assert_eq!(request_timeout(Instant::now()), Duration::ZERO);
     }
 
+    fn far_deadline() -> Instant {
+        Instant::now() + DISCOVERY_BUDGET
+    }
+
+    #[test]
+    fn reports_offline_when_every_probe_finds_the_mouse_offline() {
+        let result = discover::<()>(2, far_deadline(), |_, _| Ok(ProbeOutcome::Offline));
+        assert!(matches!(result, Ok(Discovery::Offline)));
+    }
+
+    #[test]
+    fn offline_outranks_an_error_on_another_interface() {
+        let result = discover::<()>(2, far_deadline(), |interface, _| match interface {
+            0 => Ok(ProbeOutcome::Offline),
+            _ => Err(HidppError::Hid(HidError::InitializationError)),
+        });
+        assert!(matches!(result, Ok(Discovery::Offline)));
+    }
+
+    #[test]
+    fn keeps_probing_past_an_offline_index() {
+        let result = discover(2, far_deadline(), |interface, device_index| {
+            Ok(match (interface, device_index) {
+                (1, 0xFF) => ProbeOutcome::Found("usb"),
+                (0, _) => ProbeOutcome::Offline,
+                _ => ProbeOutcome::Absent,
+            })
+        });
+        assert!(matches!(result, Ok(Discovery::Found("usb"))));
+    }
+
+    #[test]
+    fn reports_offline_for_receiver_unknown_device_error() {
+        // Captured from a LIGHTSPEED receiver while its paired mouse was off.
+        let response = [REPORT_ID_SHORT, 1, 0x8F, 0x00, 0x0F, 0x08, 0x00];
+        assert_eq!(match_report(&response, 1, 0x00, 0x0F), ReportMatch::Offline);
+    }
+
+    #[test]
+    fn recognizes_hidpp20_error_for_the_request() {
+        let response = [
+            REPORT_ID_LONG,
+            0xFF,
+            0xFF,
+            0x05,
+            0x1F,
+            0x02,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        assert_eq!(
+            match_report(&response, 0xFF, 0x05, 0x1F),
+            ReportMatch::DeviceError
+        );
+    }
+
+    #[test]
+    fn ignores_error_echoing_another_request() {
+        let response = [REPORT_ID_SHORT, 1, 0x8F, 0x00, 0x0F, 0x08, 0x00];
+        assert_eq!(
+            match_report(&response, 1, 0x05, 0x0F),
+            ReportMatch::Unrelated
+        );
+        assert_eq!(
+            match_report(&response, 1, 0x00, 0x1F),
+            ReportMatch::Unrelated
+        );
+    }
+
     #[test]
     fn ignores_error_response_for_another_device_index() {
-        let response = [REPORT_ID_ERROR, 2, 5, 0x1F, 0x01];
-        assert!(!error_response_matches(&response, 1));
-        assert!(error_response_matches(&response, 2));
+        let response = [REPORT_ID_SHORT, 2, 0x8F, 0x00, 0x0F, 0x08, 0x00];
+        assert_eq!(
+            match_report(&response, 1, 0x00, 0x0F),
+            ReportMatch::Unrelated
+        );
     }
 
     #[test]
