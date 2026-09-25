@@ -952,13 +952,16 @@ mod tests {
     }
 
     #[test]
-    fn returns_legacy_transport_error_after_unified_protocol_error() {
+    fn preserves_unified_protocol_error_over_a_legacy_protocol_error() {
         let transport = FakeTransport::new(
             BatteryFeature::Unified(5),
             vec![Ok(Some(6))],
             vec![
                 Err(short_response_error()),
-                Err(HidppError::Hid(HidError::InitializationError)),
+                Err(HidppError::Protocol(ProtocolError::ShortResponse {
+                    minimum: 7,
+                    actual: 6,
+                })),
             ],
         );
 
@@ -966,7 +969,10 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(HidppError::Hid(HidError::InitializationError))
+            Err(HidppError::Protocol(ProtocolError::ShortResponse {
+                minimum: 8,
+                actual: 7,
+            }))
         ));
         assert_eq!(
             transport.calls(),
@@ -978,80 +984,58 @@ mod tests {
         );
     }
 
-    #[test]
-    fn returns_legacy_short_write_after_unified_protocol_error() {
-        let transport = FakeTransport::new(
-            BatteryFeature::Unified(5),
-            vec![Ok(Some(6))],
-            vec![
-                Err(short_response_error()),
-                Err(HidppError::ShortWrite {
-                    expected: 7,
-                    actual: 3,
-                }),
-            ],
-        );
-
-        let result = read_battery_from(&transport);
-
-        assert!(matches!(
-            result,
-            Err(HidppError::ShortWrite {
-                expected: 7,
-                actual: 3,
-            })
-        ));
-        assert_eq!(
-            transport.calls(),
-            vec![
-                TransportCall::Query(BatteryFeature::Unified(5)),
-                TransportCall::Discover(FEATURE_BATTERY_STATUS),
-                TransportCall::Query(BatteryFeature::Legacy(6)),
-            ]
-        );
-    }
+    /// Transport failures that are not protocol errors; `HidppError` is not
+    /// `Clone`, so each case builds a fresh one.
+    const TRANSPORT_FAILURES: [fn() -> HidppError; 2] = [
+        || HidppError::Hid(HidError::InitializationError),
+        || HidppError::ShortWrite {
+            expected: 7,
+            actual: 3,
+        },
+    ];
 
     #[test]
-    fn does_not_fall_back_after_unified_hid_error() {
-        let transport = FakeTransport::new(
-            BatteryFeature::Unified(5),
-            Vec::new(),
-            vec![Err(HidppError::Hid(HidError::InitializationError))],
-        );
+    fn returns_legacy_transport_failure_after_unified_protocol_error() {
+        for failure in TRANSPORT_FAILURES {
+            let transport = FakeTransport::new(
+                BatteryFeature::Unified(5),
+                vec![Ok(Some(6))],
+                vec![Err(short_response_error()), Err(failure())],
+            );
 
-        assert!(matches!(
-            read_battery_from(&transport),
-            Err(HidppError::Hid(HidError::InitializationError))
-        ));
-        assert_eq!(
-            transport.calls(),
-            vec![TransportCall::Query(BatteryFeature::Unified(5))]
-        );
+            let result = read_battery_from(&transport);
+
+            assert_eq!(
+                result.map_err(|error| error.to_string()),
+                Err(failure().to_string())
+            );
+            assert_eq!(
+                transport.calls(),
+                vec![
+                    TransportCall::Query(BatteryFeature::Unified(5)),
+                    TransportCall::Discover(FEATURE_BATTERY_STATUS),
+                    TransportCall::Query(BatteryFeature::Legacy(6)),
+                ]
+            );
+        }
     }
 
     #[test]
     fn does_not_fall_back_after_unified_transport_failure() {
-        let transport = FakeTransport::new(
-            BatteryFeature::Unified(5),
-            Vec::new(),
-            vec![Err(HidppError::ShortWrite {
-                expected: 7,
-                actual: 3,
-            })],
-        );
+        for failure in TRANSPORT_FAILURES {
+            let transport =
+                FakeTransport::new(BatteryFeature::Unified(5), Vec::new(), vec![Err(failure())]);
 
-        let result = read_battery_from(&transport);
+            let result = read_battery_from(&transport);
 
-        assert!(matches!(
-            result,
-            Err(HidppError::ShortWrite {
-                expected: 7,
-                actual: 3,
-            })
-        ));
-        assert_eq!(
-            transport.calls(),
-            vec![TransportCall::Query(BatteryFeature::Unified(5))]
-        );
+            assert_eq!(
+                result.map_err(|error| error.to_string()),
+                Err(failure().to_string())
+            );
+            assert_eq!(
+                transport.calls(),
+                vec![TransportCall::Query(BatteryFeature::Unified(5))]
+            );
+        }
     }
 }
