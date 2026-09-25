@@ -39,30 +39,20 @@ pub struct BatteryStatus {
     pub charging: bool,
 }
 
+/// A reply that matched the request but cannot be decoded. `match_report`
+/// already checked the report ID, device index, feature index, and function
+/// byte, and turned error reports into their own outcomes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProtocolError {
-    EmptyResponse,
-    ErrorReport,
-    UnexpectedReportId(u8),
     ShortResponse { minimum: usize, actual: usize },
-    FeatureMismatch { expected: u8, actual: u8 },
 }
 
 impl fmt::Display for ProtocolError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::EmptyResponse => formatter.write_str("empty HID++ response"),
-            Self::ErrorReport => formatter.write_str("device returned a HID++ error report"),
-            Self::UnexpectedReportId(report_id) => {
-                write!(formatter, "unexpected HID++ report ID 0x{report_id:02X}")
-            }
             Self::ShortResponse { minimum, actual } => write!(
                 formatter,
                 "short HID++ response: expected at least {minimum} bytes, got {actual}"
-            ),
-            Self::FeatureMismatch { expected, actual } => write!(
-                formatter,
-                "HID++ response feature mismatch: expected 0x{expected:02X}, got 0x{actual:02X}"
             ),
         }
     }
@@ -160,7 +150,7 @@ trait BatteryDevice {
 }
 
 pub fn parse_feature_index(response: &[u8]) -> Result<Option<u8>, ProtocolError> {
-    validate_response(response, Some(FEATURE_ROOT as u8), 5)?;
+    ensure_length(response, 5)?;
     let feature_index = response[4];
     Ok((feature_index != 0).then_some(feature_index))
 }
@@ -174,40 +164,14 @@ pub fn parse_battery_status(response: &[u8]) -> Result<BatteryStatus, ProtocolEr
 }
 
 fn parse_battery(response: &[u8], charging_offset: usize) -> Result<BatteryStatus, ProtocolError> {
-    validate_response(response, None, charging_offset + 1)?;
+    ensure_length(response, charging_offset + 1)?;
     Ok(BatteryStatus {
         level: response[4],
         charging: response[charging_offset] & 0x01 != 0,
     })
 }
 
-fn validate_response(
-    response: &[u8],
-    expected_feature: Option<u8>,
-    minimum_length: usize,
-) -> Result<(), ProtocolError> {
-    let report_id = response
-        .first()
-        .copied()
-        .ok_or(ProtocolError::EmptyResponse)?;
-    if !matches!(report_id, REPORT_ID_SHORT | REPORT_ID_LONG) {
-        return Err(ProtocolError::UnexpectedReportId(report_id));
-    }
-    if response.len() < 3 {
-        return Err(ProtocolError::ShortResponse {
-            minimum: 3,
-            actual: response.len(),
-        });
-    }
-    if is_error_marker(response[2]) {
-        return Err(ProtocolError::ErrorReport);
-    }
-    if let Some(expected) = expected_feature {
-        let actual = response[2];
-        if actual != expected {
-            return Err(ProtocolError::FeatureMismatch { expected, actual });
-        }
-    }
+fn ensure_length(response: &[u8], minimum_length: usize) -> Result<(), ProtocolError> {
     if response.len() < minimum_length {
         return Err(ProtocolError::ShortResponse {
             minimum: minimum_length,
@@ -753,24 +717,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_error_report() {
-        let response = [REPORT_ID_SHORT, 1, 0x8F, 0x00, 0x0F, 0x08, 0x00];
-        assert_eq!(
-            parse_feature_index(&response),
-            Err(ProtocolError::ErrorReport)
-        );
-    }
-
-    #[test]
-    fn rejects_hidpp20_error_report_as_battery_status() {
-        let response = [REPORT_ID_SHORT, 1, 0xFF, 0x05, 0x1F, 0x02, 0x00];
-        assert_eq!(
-            parse_unified_battery(&response),
-            Err(ProtocolError::ErrorReport)
-        );
-    }
-
-    #[test]
     fn rejects_unified_battery_response_missing_charging_byte() {
         let response = [REPORT_ID_SHORT, 1, 5, 0x1F, 78, 0, 0];
         assert_eq!(
@@ -790,18 +736,6 @@ mod tests {
             Err(ProtocolError::ShortResponse {
                 minimum: 7,
                 actual: 6,
-            })
-        );
-    }
-
-    #[test]
-    fn rejects_feature_mismatch() {
-        let response = [REPORT_ID_SHORT, 1, 3, 0x0F, 7, 0];
-        assert_eq!(
-            parse_feature_index(&response),
-            Err(ProtocolError::FeatureMismatch {
-                expected: FEATURE_ROOT as u8,
-                actual: 3,
             })
         );
     }
