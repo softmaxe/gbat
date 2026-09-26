@@ -1093,6 +1093,385 @@ mod tests {
         );
     }
 
+    mod battery_recovery {
+        use super::*;
+
+        const UNIFIED_LOOKUP: [u8; 7] = [REPORT_ID_SHORT, 1, 0, 0x0F, 0x10, 0x04, 0];
+        const UNIFIED_QUERY: [u8; 7] = [REPORT_ID_SHORT, 1, 5, 0x1F, 0, 0, 0];
+        const LEGACY_LOOKUP: [u8; 7] = [REPORT_ID_SHORT, 1, 0, 0x0F, 0x10, 0, 0];
+        const LEGACY_QUERY: [u8; 7] = [REPORT_ID_SHORT, 1, 6, 0x0F, 0, 0, 0];
+        const LEGACY_FEATURE: [u8; 7] = [REPORT_ID_SHORT, 1, 0, 0x0F, 6, 0, 0];
+        const LEGACY_STATUS: [u8; 7] = [REPORT_ID_SHORT, 1, 6, 0x0F, 42, 0, 0x81];
+        const INCOMPLETE_UNIFIED: [u8; 7] = [REPORT_ID_SHORT, 1, 5, 0x1F, 99, 0, 0];
+
+        fn exchange(report: &[u8], reply: ScriptStep) -> Vec<ScriptStep> {
+            vec![ScriptStep::flush(&[]), ScriptStep::write(report), reply]
+        }
+
+        fn legacy_discovery() -> Vec<ScriptStep> {
+            exchange(&LEGACY_LOOKUP, ScriptStep::response(1_500, &LEGACY_FEATURE))
+        }
+
+        fn read_unified(io: &ScriptedIo) -> Result<Option<BatteryStatus>, HidppError> {
+            read_battery_from(&BatterySession {
+                io,
+                device_index: 1,
+                battery_feature: BatteryFeature::Unified(5),
+            })
+        }
+
+        fn assert_unified_protocol_error(result: Result<Option<BatteryStatus>, HidppError>) {
+            assert!(matches!(
+                result,
+                Err(HidppError::Protocol(ProtocolError::ShortResponse {
+                    minimum: 8,
+                    actual: 7,
+                }))
+            ));
+        }
+
+        #[test]
+        fn unsupported_unified_discovery_selects_and_reads_legacy() {
+            for reply in [
+                vec![REPORT_ID_SHORT, 1, 0, 0x0F, 0, 0, 0],
+                vec![REPORT_ID_LONG, 1, ERROR_MARKER_HIDPP20, 0, 0x0F, 2],
+            ] {
+                let mut steps = exchange(&UNIFIED_LOOKUP, ScriptStep::response(1_500, &reply));
+                steps.extend(legacy_discovery());
+                steps.extend(exchange(
+                    &LEGACY_QUERY,
+                    ScriptStep::response(1_500, &LEGACY_STATUS),
+                ));
+                let io = ScriptedIo::new(steps);
+
+                let ProbeOutcome::Found(battery_feature) =
+                    find_battery_feature(&io, 1, io.now() + DISCOVERY_BUDGET).unwrap()
+                else {
+                    panic!("legacy battery feature should be discovered");
+                };
+                let session = BatterySession {
+                    io: &io,
+                    device_index: 1,
+                    battery_feature,
+                };
+
+                assert_eq!(
+                    read_battery_from(&session).unwrap(),
+                    Some(BatteryStatus {
+                        level: 42,
+                        charging: true,
+                    })
+                );
+                assert_eq!(
+                    io.writes(),
+                    vec![UNIFIED_LOOKUP, LEGACY_LOOKUP, LEGACY_QUERY]
+                );
+                io.assert_finished();
+            }
+        }
+
+        #[test]
+        fn incomplete_unified_replies_recover_with_a_legacy_status() {
+            // Every matching prefix still lacks the unified charging byte.
+            for length in 4..=INCOMPLETE_UNIFIED.len() {
+                let mut steps = exchange(
+                    &UNIFIED_QUERY,
+                    ScriptStep::response(1_500, &INCOMPLETE_UNIFIED[..length]),
+                );
+                steps.extend(legacy_discovery());
+                steps.extend(exchange(
+                    &LEGACY_QUERY,
+                    ScriptStep::response(1_500, &LEGACY_STATUS),
+                ));
+                let io = ScriptedIo::new(steps);
+
+                assert_eq!(
+                    read_unified(&io).unwrap(),
+                    Some(BatteryStatus {
+                        level: 42,
+                        charging: true,
+                    })
+                );
+                assert_eq!(
+                    io.writes(),
+                    vec![UNIFIED_QUERY, LEGACY_LOOKUP, LEGACY_QUERY]
+                );
+                io.assert_finished();
+            }
+        }
+
+        #[test]
+        fn offline_device_error_and_silence_recover_with_a_legacy_status() {
+            for reply in [
+                ScriptStep::response(
+                    1_500,
+                    &[
+                        REPORT_ID_SHORT,
+                        1,
+                        ERROR_MARKER_HIDPP10,
+                        5,
+                        0x1F,
+                        ERROR_CODE_UNKNOWN_DEVICE,
+                        0,
+                    ],
+                ),
+                ScriptStep::response(
+                    1_500,
+                    &[REPORT_ID_LONG, 1, ERROR_MARKER_HIDPP20, 5, 0x1F, 2],
+                ),
+                ScriptStep::silence(1_500, RESPONSE_TIMEOUT),
+            ] {
+                let mut steps = exchange(&UNIFIED_QUERY, reply);
+                steps.extend(legacy_discovery());
+                steps.extend(exchange(
+                    &LEGACY_QUERY,
+                    ScriptStep::response(1_500, &LEGACY_STATUS),
+                ));
+                let io = ScriptedIo::new(steps);
+
+                assert_eq!(
+                    read_unified(&io).unwrap(),
+                    Some(BatteryStatus {
+                        level: 42,
+                        charging: true,
+                    })
+                );
+                assert_eq!(
+                    io.writes(),
+                    vec![UNIFIED_QUERY, LEGACY_LOOKUP, LEGACY_QUERY]
+                );
+                io.assert_finished();
+            }
+        }
+
+        #[test]
+        fn missing_results_from_both_features_return_no_battery_status() {
+            let mut steps = exchange(&UNIFIED_QUERY, ScriptStep::silence(1_500, RESPONSE_TIMEOUT));
+            steps.extend(legacy_discovery());
+            steps.extend(exchange(
+                &LEGACY_QUERY,
+                ScriptStep::response(
+                    1_500,
+                    &[REPORT_ID_SHORT, 1, ERROR_MARKER_HIDPP10, 6, 0x0F, 8, 0],
+                ),
+            ));
+            let io = ScriptedIo::new(steps);
+
+            assert_eq!(read_unified(&io).unwrap(), None);
+            assert_eq!(
+                io.writes(),
+                vec![UNIFIED_QUERY, LEGACY_LOOKUP, LEGACY_QUERY]
+            );
+            io.assert_finished();
+        }
+
+        #[test]
+        fn unavailable_legacy_feature_preserves_the_unified_protocol_error() {
+            for reply in [
+                ScriptStep::response(1_500, &[REPORT_ID_SHORT, 1, 0, 0x0F, 0, 0, 0]),
+                ScriptStep::response(
+                    1_500,
+                    &[REPORT_ID_SHORT, 1, ERROR_MARKER_HIDPP10, 0, 0x0F, 8, 0],
+                ),
+                ScriptStep::response(
+                    1_500,
+                    &[REPORT_ID_LONG, 1, ERROR_MARKER_HIDPP20, 0, 0x0F, 2],
+                ),
+                ScriptStep::silence(1_500, RESPONSE_TIMEOUT),
+            ] {
+                let mut steps = exchange(
+                    &UNIFIED_QUERY,
+                    ScriptStep::response(1_500, &INCOMPLETE_UNIFIED),
+                );
+                steps.extend(exchange(&LEGACY_LOOKUP, reply));
+                let io = ScriptedIo::new(steps);
+
+                assert_unified_protocol_error(read_unified(&io));
+                assert_eq!(io.writes(), vec![UNIFIED_QUERY, LEGACY_LOOKUP]);
+                io.assert_finished();
+            }
+        }
+
+        #[test]
+        fn malformed_legacy_lookup_preserves_the_unified_protocol_error() {
+            let mut steps = exchange(
+                &UNIFIED_QUERY,
+                ScriptStep::response(1_500, &INCOMPLETE_UNIFIED),
+            );
+            steps.extend(exchange(
+                &LEGACY_LOOKUP,
+                ScriptStep::response(1_500, &[REPORT_ID_SHORT, 1, 0, 0x0F]),
+            ));
+            let io = ScriptedIo::new(steps);
+
+            assert_unified_protocol_error(read_unified(&io));
+            assert_eq!(io.writes(), vec![UNIFIED_QUERY, LEGACY_LOOKUP]);
+            io.assert_finished();
+        }
+
+        #[test]
+        fn malformed_or_missing_legacy_status_preserves_the_unified_protocol_error() {
+            for reply in [
+                ScriptStep::response(1_500, &[REPORT_ID_SHORT, 1, 6, 0x0F, 42, 0]),
+                ScriptStep::response(
+                    1_500,
+                    &[REPORT_ID_SHORT, 1, ERROR_MARKER_HIDPP10, 6, 0x0F, 8, 0],
+                ),
+                ScriptStep::response(
+                    1_500,
+                    &[REPORT_ID_LONG, 1, ERROR_MARKER_HIDPP20, 6, 0x0F, 2],
+                ),
+                ScriptStep::silence(1_500, RESPONSE_TIMEOUT),
+            ] {
+                let mut steps = exchange(
+                    &UNIFIED_QUERY,
+                    ScriptStep::response(1_500, &INCOMPLETE_UNIFIED),
+                );
+                steps.extend(legacy_discovery());
+                steps.extend(exchange(&LEGACY_QUERY, reply));
+                let io = ScriptedIo::new(steps);
+
+                assert_unified_protocol_error(read_unified(&io));
+                assert_eq!(
+                    io.writes(),
+                    vec![UNIFIED_QUERY, LEGACY_LOOKUP, LEGACY_QUERY]
+                );
+                io.assert_finished();
+            }
+        }
+
+        #[test]
+        fn a_missing_unified_result_does_not_hide_a_legacy_protocol_error() {
+            let mut steps = exchange(&UNIFIED_QUERY, ScriptStep::silence(1_500, RESPONSE_TIMEOUT));
+            steps.extend(legacy_discovery());
+            steps.extend(exchange(
+                &LEGACY_QUERY,
+                ScriptStep::response(1_500, &[REPORT_ID_SHORT, 1, 6, 0x0F, 42, 0]),
+            ));
+            let io = ScriptedIo::new(steps);
+
+            assert!(matches!(
+                read_unified(&io),
+                Err(HidppError::Protocol(ProtocolError::ShortResponse {
+                    minimum: 7,
+                    actual: 6,
+                }))
+            ));
+            assert_eq!(
+                io.writes(),
+                vec![UNIFIED_QUERY, LEGACY_LOOKUP, LEGACY_QUERY]
+            );
+            io.assert_finished();
+        }
+
+        #[derive(Clone, Copy)]
+        enum IoFailure {
+            FlushRead,
+            Write,
+            ShortWrite,
+            ResponseRead,
+        }
+
+        const IO_FAILURES: [IoFailure; 4] = [
+            IoFailure::FlushRead,
+            IoFailure::Write,
+            IoFailure::ShortWrite,
+            IoFailure::ResponseRead,
+        ];
+
+        impl IoFailure {
+            fn steps(self, report: &[u8]) -> Vec<ScriptStep> {
+                let read_failure = |phase, timeout_ms| ScriptStep::Read {
+                    phase,
+                    timeout_ms,
+                    result: Err(HidError::InitializationError),
+                    advance: Duration::ZERO,
+                };
+                match self {
+                    Self::FlushRead => vec![read_failure(ReadPhase::Flush, 0)],
+                    Self::Write | Self::ShortWrite => vec![
+                        ScriptStep::flush(&[]),
+                        ScriptStep::Write {
+                            report: report.to_vec(),
+                            result: match self {
+                                Self::ShortWrite => Ok(3),
+                                _ => Err(HidError::InitializationError),
+                            },
+                            advance: Duration::ZERO,
+                        },
+                    ],
+                    Self::ResponseRead => {
+                        exchange(report, read_failure(ReadPhase::Response, 1_500))
+                    }
+                }
+            }
+
+            fn assert_error(self, result: Result<Option<BatteryStatus>, HidppError>) {
+                match self {
+                    Self::ShortWrite => assert!(matches!(
+                        result,
+                        Err(HidppError::ShortWrite {
+                            expected: 7,
+                            actual: 3,
+                        })
+                    )),
+                    _ => assert!(matches!(
+                        result,
+                        Err(HidppError::Hid(HidError::InitializationError))
+                    )),
+                }
+            }
+        }
+
+        #[test]
+        fn unified_io_failures_stop_without_legacy_recovery() {
+            for failure in IO_FAILURES {
+                let io = ScriptedIo::new(failure.steps(&UNIFIED_QUERY));
+
+                failure.assert_error(read_unified(&io));
+                let expected_calls = match failure {
+                    IoFailure::FlushRead => vec![IoCall::Read(0)],
+                    IoFailure::Write | IoFailure::ShortWrite => {
+                        vec![IoCall::Read(0), IoCall::Write(UNIFIED_QUERY.to_vec())]
+                    }
+                    IoFailure::ResponseRead => vec![
+                        IoCall::Read(0),
+                        IoCall::Write(UNIFIED_QUERY.to_vec()),
+                        IoCall::Read(1_500),
+                    ],
+                };
+                assert_eq!(*io.calls.borrow(), expected_calls);
+                io.assert_finished();
+            }
+        }
+
+        #[test]
+        fn legacy_lookup_and_query_io_failures_replace_the_unified_protocol_error() {
+            for failed_report in [LEGACY_LOOKUP, LEGACY_QUERY] {
+                for failure in IO_FAILURES {
+                    let mut steps = exchange(
+                        &UNIFIED_QUERY,
+                        ScriptStep::response(1_500, &INCOMPLETE_UNIFIED),
+                    );
+                    let mut expected_writes = vec![UNIFIED_QUERY];
+                    if failed_report == LEGACY_QUERY {
+                        steps.extend(legacy_discovery());
+                        expected_writes.push(LEGACY_LOOKUP);
+                    }
+                    steps.extend(failure.steps(&failed_report));
+                    if !matches!(failure, IoFailure::FlushRead) {
+                        expected_writes.push(failed_report);
+                    }
+                    let io = ScriptedIo::new(steps);
+
+                    failure.assert_error(read_unified(&io));
+                    assert_eq!(io.writes(), expected_writes);
+                    io.assert_finished();
+                }
+            }
+        }
+    }
+
     #[test]
     fn uses_the_discovered_feature_without_rediscovery() {
         let status = BatteryStatus {
