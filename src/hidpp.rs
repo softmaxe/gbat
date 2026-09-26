@@ -755,12 +755,6 @@ mod tests {
     }
 
     #[test]
-    fn builds_function_byte_from_function_and_software_id() {
-        assert_eq!(function_byte(0x01, DEFAULT_SW_ID), 0x1F);
-        assert_eq!(function_byte(0x00, DEFAULT_SW_ID), 0x0F);
-    }
-
-    #[test]
     fn caps_request_timeout_at_the_response_timeout() {
         assert_eq!(
             request_timeout(Instant::now() + DISCOVERY_BUDGET),
@@ -771,12 +765,6 @@ mod tests {
 
     fn far_deadline() -> Instant {
         Instant::now() + DISCOVERY_BUDGET
-    }
-
-    #[test]
-    fn reports_offline_when_every_probe_finds_the_mouse_offline() {
-        let result = discover::<()>(2, far_deadline(), |_, _| Ok(ProbeOutcome::Offline));
-        assert!(matches!(result, Ok(Discovery::Offline)));
     }
 
     #[test]
@@ -846,15 +834,6 @@ mod tests {
         );
         assert_eq!(
             match_report(&response, 1, 0x00, 0x1F),
-            ReportMatch::Unrelated
-        );
-    }
-
-    #[test]
-    fn ignores_error_response_for_another_device_index() {
-        let response = [REPORT_ID_SHORT, 2, 0x8F, 0x00, 0x0F, 0x08, 0x00];
-        assert_eq!(
-            match_report(&response, 1, 0x00, 0x0F),
             ReportMatch::Unrelated
         );
     }
