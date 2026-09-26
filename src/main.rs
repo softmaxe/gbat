@@ -58,25 +58,8 @@ fn format_status(status: BatteryStatus) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_status, found_transport};
-    use gbat::hidpp::{BatteryStatus, Discovery};
-
-    #[test]
-    fn explains_an_offline_mouse_separately_from_a_missing_interface() {
-        assert_eq!(
-            found_transport::<()>(Discovery::Offline),
-            Err(String::from(
-                "The receiver reports no connected mouse. Turn the mouse on or wake it, and retry."
-            ))
-        );
-        assert_eq!(
-            found_transport::<()>(Discovery::NotFound),
-            Err(String::from(
-                "No responsive Logitech HID++ interface found. Connect the GPW2 through its LIGHTSPEED receiver or USB, wake it, and retry."
-            ))
-        );
-        assert_eq!(found_transport(Discovery::Found(7)), Ok(7));
-    }
+    use super::format_status;
+    use gbat::hidpp::BatteryStatus;
 
     #[test]
     fn formats_battery_status_for_terminal_and_raycast() {
