@@ -149,6 +149,44 @@ trait BatteryDevice {
     fn query_feature(&self, feature: BatteryFeature) -> Result<Option<BatteryStatus>, HidppError>;
 }
 
+/// Report I/O and the monotonic timeline used by a request.
+trait RequestIo {
+    fn write(&self, report: &[u8]) -> Result<usize, HidError>;
+    fn read_timeout(&self, buffer: &mut [u8], timeout_ms: i32) -> Result<usize, HidError>;
+    fn now(&self) -> Instant;
+}
+
+impl RequestIo for HidDevice {
+    fn write(&self, report: &[u8]) -> Result<usize, HidError> {
+        HidDevice::write(self, report)
+    }
+
+    fn read_timeout(&self, buffer: &mut [u8], timeout_ms: i32) -> Result<usize, HidError> {
+        HidDevice::read_timeout(self, buffer, timeout_ms)
+    }
+
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// A borrowed device with the feature selected by discovery.
+struct BatterySession<'a, I> {
+    io: &'a I,
+    device_index: u8,
+    battery_feature: BatteryFeature,
+}
+
+impl HidppTransport {
+    fn session(&self) -> BatterySession<'_, HidDevice> {
+        BatterySession {
+            io: &self.device,
+            device_index: self.device_index,
+            battery_feature: self.battery_feature,
+        }
+    }
+}
+
 pub fn parse_feature_index(response: &[u8]) -> Result<Option<u8>, ProtocolError> {
     ensure_length(response, 5)?;
     let feature_index = response[4];
@@ -183,10 +221,10 @@ fn ensure_length(response: &[u8], minimum_length: usize) -> Result<(), ProtocolE
 
 /// Discard reports that arrived before the current request. Queued reports are
 /// already available, so this never waits for new ones.
-fn flush(device: &HidDevice) -> Result<(), HidppError> {
-    let deadline = Instant::now() + FLUSH_WINDOW;
+fn flush(device: &impl RequestIo) -> Result<(), HidppError> {
+    let deadline = device.now() + FLUSH_WINDOW;
     let mut buffer = [0_u8; REPORT_BUFFER_LEN];
-    while Instant::now() < deadline {
+    while device.now() < deadline {
         if device.read_timeout(&mut buffer, 0)? == 0 {
             break;
         }
@@ -199,14 +237,14 @@ fn function_byte(function: u8, sw_id: u8) -> u8 {
 }
 
 /// Remaining time for one request, capped at the per-request timeout.
-fn request_timeout(deadline: Instant) -> Duration {
+fn request_timeout(device: &impl RequestIo, deadline: Instant) -> Duration {
     deadline
-        .saturating_duration_since(Instant::now())
+        .saturating_duration_since(device.now())
         .min(RESPONSE_TIMEOUT)
 }
 
 fn send_short(
-    device: &HidDevice,
+    device: &impl RequestIo,
     device_index: u8,
     feature_index: u8,
     function_byte: u8,
@@ -282,16 +320,16 @@ fn match_report(
 }
 
 fn read_response(
-    device: &HidDevice,
+    device: &impl RequestIo,
     device_index: u8,
     feature_index: u8,
     function_byte: u8,
     timeout: Duration,
 ) -> Result<Reply, HidppError> {
-    let deadline = Instant::now() + timeout;
+    let deadline = device.now() + timeout;
     let mut buffer = [0_u8; REPORT_BUFFER_LEN];
     loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
+        let remaining = deadline.saturating_duration_since(device.now());
         let timeout_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
         let length = device.read_timeout(&mut buffer, timeout_ms)?;
         if length > 0 {
@@ -307,7 +345,7 @@ fn read_response(
                 ReportMatch::Unrelated => {}
             }
         }
-        if Instant::now() >= deadline {
+        if device.now() >= deadline {
             return Ok(Reply::Silence);
         }
     }
@@ -315,7 +353,7 @@ fn read_response(
 
 /// Send one short request and wait for its reply.
 fn request(
-    device: &HidDevice,
+    device: &impl RequestIo,
     device_index: u8,
     feature_index: u8,
     function: u8,
@@ -330,7 +368,7 @@ fn request(
 }
 
 fn get_feature_index_on_device(
-    device: &HidDevice,
+    device: &impl RequestIo,
     device_index: u8,
     sw_id: u8,
     feature_id: u16,
@@ -357,7 +395,7 @@ fn get_feature_index_on_device(
 }
 
 fn query_battery_on_device(
-    device: &HidDevice,
+    device: &impl RequestIo,
     device_index: u8,
     sw_id: u8,
     feature_index: u8,
@@ -383,17 +421,7 @@ pub fn get_feature_index(
     transport: &HidppTransport,
     feature_id: u16,
 ) -> Result<Option<u8>, HidppError> {
-    let lookup = get_feature_index_on_device(
-        &transport.device,
-        transport.device_index,
-        DEFAULT_SW_ID,
-        feature_id,
-        RESPONSE_TIMEOUT,
-    )?;
-    Ok(match lookup {
-        FeatureLookup::Index(feature_index) => Some(feature_index),
-        FeatureLookup::Unsupported | FeatureLookup::Offline | FeatureLookup::Silent => None,
-    })
+    transport.session().discover_feature(feature_id)
 }
 
 impl BatteryDevice for HidppTransport {
@@ -406,12 +434,36 @@ impl BatteryDevice for HidppTransport {
     }
 
     fn query_feature(&self, feature: BatteryFeature) -> Result<Option<BatteryStatus>, HidppError> {
+        self.session().query_feature(feature)
+    }
+}
+
+impl<I: RequestIo> BatteryDevice for BatterySession<'_, I> {
+    fn selected_feature(&self) -> BatteryFeature {
+        self.battery_feature
+    }
+
+    fn discover_feature(&self, feature_id: u16) -> Result<Option<u8>, HidppError> {
+        let lookup = get_feature_index_on_device(
+            self.io,
+            self.device_index,
+            DEFAULT_SW_ID,
+            feature_id,
+            RESPONSE_TIMEOUT,
+        )?;
+        Ok(match lookup {
+            FeatureLookup::Index(feature_index) => Some(feature_index),
+            FeatureLookup::Unsupported | FeatureLookup::Offline | FeatureLookup::Silent => None,
+        })
+    }
+
+    fn query_feature(&self, feature: BatteryFeature) -> Result<Option<BatteryStatus>, HidppError> {
         let (feature_index, function, parser) = match feature {
             BatteryFeature::Unified(index) => (index, 0x01, parse_unified_battery as _),
             BatteryFeature::Legacy(index) => (index, 0x00, parse_battery_status as _),
         };
         query_battery_on_device(
-            &self.device,
+            self.io,
             self.device_index,
             DEFAULT_SW_ID,
             feature_index,
@@ -469,7 +521,7 @@ fn candidate_interfaces(api: &HidApi) -> Vec<&hidapi::DeviceInfo> {
 }
 
 fn find_battery_feature(
-    device: &HidDevice,
+    device: &impl RequestIo,
     device_index: u8,
     deadline: Instant,
 ) -> Result<ProbeOutcome<BatteryFeature>, HidppError> {
@@ -478,7 +530,7 @@ fn find_battery_feature(
         device_index,
         DEFAULT_SW_ID,
         FEATURE_UNIFIED_BATTERY,
-        request_timeout(deadline),
+        request_timeout(device, deadline),
     )?;
     match unified {
         FeatureLookup::Index(feature_index) => {
@@ -496,7 +548,7 @@ fn find_battery_feature(
         device_index,
         DEFAULT_SW_ID,
         FEATURE_BATTERY_STATUS,
-        request_timeout(deadline),
+        request_timeout(device, deadline),
     )?;
     Ok(match legacy {
         FeatureLookup::Index(feature_index) => {
@@ -547,13 +599,14 @@ fn probe_device<'slot>(
 fn discover<D>(
     interface_count: usize,
     deadline: Instant,
+    now: impl Fn() -> Instant,
     mut probe: impl FnMut(usize, u8) -> Result<ProbeOutcome<D>, HidppError>,
 ) -> Result<Discovery<D>, HidppError> {
     let mut offline = false;
     let mut last_error = None;
     'probe: for &device_index in DEVICE_INDEX_CANDIDATES {
         for interface in 0..interface_count {
-            if Instant::now() >= deadline {
+            if now() >= deadline {
                 break 'probe;
             }
             match probe(interface, device_index) {
@@ -583,36 +636,229 @@ pub fn open_first_working_transport(api: &HidApi) -> Result<Discovery<HidppTrans
         .collect::<Vec<_>>();
     let deadline = Instant::now() + DISCOVERY_BUDGET;
 
-    discover(candidates.len(), deadline, |interface, device_index| {
-        let Some(device) = probe_device(api, candidates[interface], &mut slots[interface])? else {
-            return Ok(ProbeOutcome::Absent);
-        };
-        let outcome = match find_battery_feature(device, device_index, deadline)? {
-            ProbeOutcome::Found(battery_feature) => {
-                let ProbeSlot::Open(device) =
-                    std::mem::replace(&mut slots[interface], ProbeSlot::Failed)
-                else {
-                    return Ok(ProbeOutcome::Absent);
-                };
-                ProbeOutcome::Found(HidppTransport {
-                    device,
-                    device_index,
-                    battery_feature,
-                })
-            }
-            ProbeOutcome::Offline => ProbeOutcome::Offline,
-            ProbeOutcome::Absent => ProbeOutcome::Absent,
-        };
-        Ok(outcome)
-    })
+    discover(
+        candidates.len(),
+        deadline,
+        Instant::now,
+        |interface, device_index| {
+            let Some(device) = probe_device(api, candidates[interface], &mut slots[interface])?
+            else {
+                return Ok(ProbeOutcome::Absent);
+            };
+            let outcome = match find_battery_feature(device, device_index, deadline)? {
+                ProbeOutcome::Found(battery_feature) => {
+                    let ProbeSlot::Open(device) =
+                        std::mem::replace(&mut slots[interface], ProbeSlot::Failed)
+                    else {
+                        return Ok(ProbeOutcome::Absent);
+                    };
+                    ProbeOutcome::Found(HidppTransport {
+                        device,
+                        device_index,
+                        battery_feature,
+                    })
+                }
+                ProbeOutcome::Offline => ProbeOutcome::Offline,
+                ProbeOutcome::Absent => ProbeOutcome::Absent,
+            };
+            Ok(outcome)
+        },
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
+    use std::rc::Rc;
 
     use super::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ReadPhase {
+        Flush,
+        Response,
+    }
+
+    /// An ordered script gates response reports behind their request's write.
+    /// The phase is explicit because both phases can use a zero read timeout.
+    #[derive(Debug)]
+    enum ScriptStep {
+        Read {
+            phase: ReadPhase,
+            timeout_ms: i32,
+            result: Result<Vec<u8>, HidError>,
+            advance: Duration,
+        },
+        Write {
+            report: Vec<u8>,
+            result: Result<usize, HidError>,
+            advance: Duration,
+        },
+    }
+
+    impl ScriptStep {
+        fn flush(report: &[u8]) -> Self {
+            Self::Read {
+                phase: ReadPhase::Flush,
+                timeout_ms: 0,
+                result: Ok(report.to_vec()),
+                advance: Duration::ZERO,
+            }
+        }
+
+        fn write(report: &[u8]) -> Self {
+            Self::Write {
+                report: report.to_vec(),
+                result: Ok(report.len()),
+                advance: Duration::ZERO,
+            }
+        }
+
+        fn response(timeout_ms: i32, report: &[u8]) -> Self {
+            Self::Read {
+                phase: ReadPhase::Response,
+                timeout_ms,
+                result: Ok(report.to_vec()),
+                advance: Duration::ZERO,
+            }
+        }
+
+        fn silence(timeout_ms: i32, advance: Duration) -> Self {
+            Self::Read {
+                phase: ReadPhase::Response,
+                timeout_ms,
+                result: Ok(Vec::new()),
+                advance,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    enum IoCall {
+        Read(i32),
+        Write(Vec<u8>),
+    }
+
+    struct ScriptedIo {
+        // Sharing this cell keeps multiple scripted interfaces on one timeline.
+        clock: Rc<Cell<Instant>>,
+        steps: RefCell<VecDeque<ScriptStep>>,
+        calls: RefCell<Vec<IoCall>>,
+    }
+
+    impl ScriptedIo {
+        fn new(steps: Vec<ScriptStep>) -> Self {
+            let mut after_write = false;
+            for step in &steps {
+                match step {
+                    ScriptStep::Write { .. } => after_write = true,
+                    ScriptStep::Read {
+                        phase: ReadPhase::Flush,
+                        timeout_ms,
+                        ..
+                    } => {
+                        assert_eq!(*timeout_ms, 0, "flush reads must be nonblocking");
+                        after_write = false;
+                    }
+                    ScriptStep::Read {
+                        phase: ReadPhase::Response,
+                        result,
+                        advance,
+                        ..
+                    } => {
+                        assert!(
+                            after_write,
+                            "a scripted response requires a preceding write"
+                        );
+                        if matches!(result, Ok(report) if report.is_empty()) {
+                            assert!(
+                                !advance.is_zero(),
+                                "scripted silence must advance virtual time"
+                            );
+                        }
+                    }
+                }
+            }
+            Self {
+                clock: Rc::new(Cell::new(Instant::now())),
+                steps: RefCell::new(steps.into()),
+                calls: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn assert_finished(&self) {
+            assert!(
+                self.steps.borrow().is_empty(),
+                "unconsumed script steps: {:?}",
+                self.steps.borrow()
+            );
+        }
+
+        fn writes(&self) -> Vec<Vec<u8>> {
+            self.calls
+                .borrow()
+                .iter()
+                .filter_map(|call| match call {
+                    IoCall::Write(report) => Some(report.clone()),
+                    IoCall::Read(_) => None,
+                })
+                .collect()
+        }
+    }
+
+    impl RequestIo for ScriptedIo {
+        fn write(&self, report: &[u8]) -> Result<usize, HidError> {
+            self.calls.borrow_mut().push(IoCall::Write(report.to_vec()));
+            let step = self
+                .steps
+                .borrow_mut()
+                .pop_front()
+                .expect("script exhausted during write");
+            let ScriptStep::Write {
+                report: expected,
+                result,
+                advance,
+            } = step
+            else {
+                panic!("unexpected write; expected {step:?}");
+            };
+            assert_eq!(report, expected, "unexpected request bytes");
+            self.clock.set(self.now() + advance);
+            result
+        }
+
+        fn read_timeout(&self, buffer: &mut [u8], timeout_ms: i32) -> Result<usize, HidError> {
+            self.calls.borrow_mut().push(IoCall::Read(timeout_ms));
+            let step = self
+                .steps
+                .borrow_mut()
+                .pop_front()
+                .expect("script exhausted during read");
+            let ScriptStep::Read {
+                timeout_ms: expected,
+                result,
+                advance,
+                ..
+            } = step
+            else {
+                panic!("unexpected read; expected {step:?}");
+            };
+            assert_eq!(timeout_ms, expected, "unexpected read timeout");
+            self.clock.set(self.now() + advance);
+            let report = result?;
+            assert!(
+                report.len() <= buffer.len(),
+                "scripted report exceeds buffer"
+            );
+            buffer[..report.len()].copy_from_slice(&report);
+            Ok(report.len())
+        }
+
+        fn now(&self) -> Instant {
+            self.clock.get()
+        }
+    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum TransportCall {
@@ -756,35 +1002,44 @@ mod tests {
 
     #[test]
     fn caps_request_timeout_at_the_response_timeout() {
+        let io = ScriptedIo::new(Vec::new());
         assert_eq!(
-            request_timeout(Instant::now() + DISCOVERY_BUDGET),
+            request_timeout(&io, io.now() + DISCOVERY_BUDGET),
             RESPONSE_TIMEOUT
         );
-        assert_eq!(request_timeout(Instant::now()), Duration::ZERO);
-    }
-
-    fn far_deadline() -> Instant {
-        Instant::now() + DISCOVERY_BUDGET
+        assert_eq!(request_timeout(&io, io.now()), Duration::ZERO);
     }
 
     #[test]
     fn offline_outranks_an_error_on_another_interface() {
-        let result = discover::<()>(2, far_deadline(), |interface, _| match interface {
-            0 => Ok(ProbeOutcome::Offline),
-            _ => Err(HidppError::Hid(HidError::InitializationError)),
-        });
+        let io = ScriptedIo::new(Vec::new());
+        let result = discover::<()>(
+            2,
+            io.now() + DISCOVERY_BUDGET,
+            || io.now(),
+            |interface, _| match interface {
+                0 => Ok(ProbeOutcome::Offline),
+                _ => Err(HidppError::Hid(HidError::InitializationError)),
+            },
+        );
         assert!(matches!(result, Ok(Discovery::Offline)));
     }
 
     #[test]
     fn keeps_probing_past_an_offline_index() {
-        let result = discover(2, far_deadline(), |interface, device_index| {
-            Ok(match (interface, device_index) {
-                (1, 0xFF) => ProbeOutcome::Found("usb"),
-                (0, _) => ProbeOutcome::Offline,
-                _ => ProbeOutcome::Absent,
-            })
-        });
+        let io = ScriptedIo::new(Vec::new());
+        let result = discover(
+            2,
+            io.now() + DISCOVERY_BUDGET,
+            || io.now(),
+            |interface, device_index| {
+                Ok(match (interface, device_index) {
+                    (1, 0xFF) => ProbeOutcome::Found("usb"),
+                    (0, _) => ProbeOutcome::Offline,
+                    _ => ProbeOutcome::Absent,
+                })
+            },
+        );
         assert!(matches!(result, Ok(Discovery::Found("usb"))));
     }
 
@@ -1015,6 +1270,152 @@ mod tests {
                 transport.calls(),
                 vec![TransportCall::Query(BatteryFeature::Unified(5))]
             );
+        }
+    }
+
+    mod scripted_success {
+        use super::*;
+
+        #[test]
+        fn discovers_and_reads_unified_battery_from_raw_reports() {
+            for (device_index, feature_index, level, charging_byte, charging) in
+                [(1, 5, 78, 0x81, true), (0xFF, 9, 42, 0x02, false)]
+            {
+                let discover_report = [REPORT_ID_SHORT, device_index, 0, 0x0F, 0x10, 0x04, 0];
+                let battery_report = [REPORT_ID_SHORT, device_index, feature_index, 0x1F, 0, 0, 0];
+                let mut stale_battery = [0; REPORT_BUFFER_LEN];
+                stale_battery[..8].copy_from_slice(&[
+                    REPORT_ID_LONG,
+                    device_index,
+                    feature_index,
+                    0x1F,
+                    8,
+                    0,
+                    0,
+                    0,
+                ]);
+                let mut battery_response = [0; REPORT_BUFFER_LEN];
+                battery_response[..8].copy_from_slice(&[
+                    REPORT_ID_LONG,
+                    device_index,
+                    feature_index,
+                    0x1F,
+                    level,
+                    0,
+                    0,
+                    charging_byte,
+                ]);
+                let io = ScriptedIo::new(vec![
+                    ScriptStep::flush(&[REPORT_ID_SHORT, device_index, 0, 0x0F, 99, 0, 0]),
+                    ScriptStep::flush(&[]),
+                    ScriptStep::write(&discover_report),
+                    ScriptStep::response(
+                        1_500,
+                        &[REPORT_ID_SHORT, device_index, 0, 0x0F, feature_index, 0, 0],
+                    ),
+                    ScriptStep::flush(&stale_battery),
+                    ScriptStep::flush(&[]),
+                    ScriptStep::write(&battery_report),
+                    ScriptStep::response(1_500, &battery_response),
+                ]);
+
+                let ProbeOutcome::Found(battery_feature) =
+                    find_battery_feature(&io, device_index, io.now() + DISCOVERY_BUDGET).unwrap()
+                else {
+                    panic!("battery feature should be discovered");
+                };
+                let session = BatterySession {
+                    io: &io,
+                    device_index,
+                    battery_feature,
+                };
+                assert_eq!(
+                    read_battery_from(&session).unwrap(),
+                    Some(BatteryStatus { level, charging })
+                );
+                assert_eq!(io.writes(), vec![discover_report, battery_report]);
+                io.assert_finished();
+            }
+        }
+
+        #[test]
+        fn zero_timeout_response_is_available_after_its_write() {
+            let response = [REPORT_ID_SHORT, 1, 0, 0x0F, 5, 0, 0];
+            let io = ScriptedIo::new(vec![
+                ScriptStep::flush(&[]),
+                ScriptStep::write(&[REPORT_ID_SHORT, 1, 0, 0x0F, 0x10, 0x04, 0]),
+                ScriptStep::response(0, &response),
+            ]);
+
+            let result = get_feature_index_on_device(
+                &io,
+                1,
+                DEFAULT_SW_ID,
+                FEATURE_UNIFIED_BATTERY,
+                Duration::ZERO,
+            );
+
+            assert!(matches!(result, Ok(FeatureLookup::Index(5))));
+            assert_eq!(io.calls.borrow().first(), Some(&IoCall::Read(0)));
+            assert_eq!(io.calls.borrow().last(), Some(&IoCall::Read(0)));
+            io.assert_finished();
+        }
+
+        #[test]
+        fn expected_silence_advances_virtual_time() {
+            let timeout = Duration::from_millis(10);
+            let io = ScriptedIo::new(vec![
+                ScriptStep::flush(&[]),
+                ScriptStep::write(&[REPORT_ID_SHORT, 1, 0, 0x0F, 0x10, 0x04, 0]),
+                ScriptStep::silence(10, timeout),
+            ]);
+            let start = io.now();
+
+            let result = get_feature_index_on_device(
+                &io,
+                1,
+                DEFAULT_SW_ID,
+                FEATURE_UNIFIED_BATTERY,
+                timeout,
+            );
+
+            assert!(matches!(result, Ok(FeatureLookup::Silent)));
+            assert_eq!(io.now().duration_since(start), timeout);
+            io.assert_finished();
+        }
+
+        #[test]
+        #[should_panic(expected = "script exhausted during read")]
+        fn an_exhausted_script_fails_instead_of_inventing_silence() {
+            let io = ScriptedIo::new(vec![
+                ScriptStep::flush(&[]),
+                ScriptStep::write(&[REPORT_ID_SHORT, 1, 0, 0x0F, 0x10, 0x04, 0]),
+            ]);
+            let _ = find_battery_feature(&io, 1, io.now() + DISCOVERY_BUDGET);
+        }
+
+        #[test]
+        #[should_panic(expected = "unexpected read; expected Write")]
+        fn an_unexpected_io_operation_fails_explicitly() {
+            let io = ScriptedIo::new(vec![ScriptStep::write(&[
+                REPORT_ID_SHORT,
+                1,
+                0,
+                0x0F,
+                0x10,
+                0x04,
+                0,
+            ])]);
+            let _ = find_battery_feature(&io, 1, io.now() + DISCOVERY_BUDGET);
+        }
+
+        #[test]
+        #[should_panic(expected = "a scripted response requires a preceding write")]
+        fn a_script_cannot_expose_a_response_before_its_write() {
+            let _ = ScriptedIo::new(vec![ScriptStep::response(
+                0,
+                &[REPORT_ID_SHORT, 1, 0, 0x0F, 5, 0, 0],
+            )]);
         }
     }
 }
