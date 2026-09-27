@@ -31,7 +31,7 @@ npm run test:film
 npm test
 ```
 
-Timeline tests inspect exported JSON, caption durations and ordering, vocabulary, cue synthesis modules, font glyph coverage, and caption widths measured from the bundled font. Audio tests invoke the public Python CLI with JSON in and WAV out, checking length and each isolated cue onset. Film tests inspect both movies with ffprobe, check PNG files, and reject stale builds. The final-second audio check is opt-in with `CHECK_FINAL_SILENCE=1 npm run test:film` until the complete score is added in #26.
+Timeline tests inspect exported JSON, caption durations and ordering, vocabulary, cue synthesis modules, font glyph coverage, and caption widths measured from the bundled font. Audio tests invoke the public Python CLI with JSON in and WAV out, checking length and each isolated cue onset. Film tests inspect both movies with ffprobe, check PNG files, reject stale builds, and require the complete final second of audio to stay below -40 dB.
 
 Use `npm run studio` for frame-by-frame review. The `GbatEnglish` and `GbatChinese` compositions share pictures and audio timing. Review the PNGs in both languages after changing a Beat; automated checks do not judge illustrations or text placement inside pictures.
 
