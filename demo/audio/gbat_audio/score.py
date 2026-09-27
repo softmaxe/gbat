@@ -80,6 +80,9 @@ def synthesize(timeline: dict, sample_rate: int) -> np.ndarray:
     beats = {beat["id"]: beat for beat in timeline["beats"]}
     captions = {caption["id"]: caption for beat in beats.values() for caption in beat["captions"]}
     drain = captions["opening-charge"]
+    opening_moments = beats["opening"].get("moments", {})
+    drain_window = (opening_moments.get("drain", drain["start"]),
+                    opening_moments.get("collapse", drain["end"]))
     charging = captions["command-charge"]
     ending = beats["ending"]
     farewell = captions["ending-install"]
@@ -103,7 +106,7 @@ def synthesize(timeline: dict, sample_rate: int) -> np.ndarray:
             for note, wave, gain in ((48, "triangle", 0.10), (60, "square", 0.065), (64, "triangle", 0.04), (67, "triangle", 0.04)):
                 _add(result, _note(note, resolve, silence - resolve, sample_rate, wave) * gain, resolve, sample_rate)
         else:
-            sag = (drain["start"], drain["end"]) if style == "opening" else None
+            sag = drain_window if style == "opening" else None
             _section(result, start, end, sample_rate, style, rng, sag)
 
     seconds = np.arange(len(result)) / sample_rate
