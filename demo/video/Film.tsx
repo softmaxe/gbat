@@ -1,6 +1,8 @@
-import { AbsoluteFill, Sequence } from "remotion";
+import { AbsoluteFill, Sequence, useCurrentFrame, useVideoConfig } from "remotion";
 import { BEATS, toFrame } from "../timeline";
 import type { Language } from "../timeline";
+import { ending } from "../timeline/beats/beat6-ending";
+import { ramp } from "./anim";
 import { Beat1Opening } from "./beats/Beat1Opening";
 import { Beat2OldWay } from "./beats/Beat2OldWay";
 import { Beat3OneCommand } from "./beats/Beat3OneCommand";
@@ -14,13 +16,18 @@ import { loadFonts } from "./fonts";
 loadFonts();
 const pictures = [Beat1Opening, Beat2OldWay, Beat3OneCommand, Beat4WakeIt, Beat5WhereItFits, Beat6Ending];
 
-export const Film: React.FC<{ language: Language }> = ({ language }) => (
-  <AbsoluteFill>
+export const Film: React.FC<{ language: Language }> = ({ language }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  const opacity = 1 - ramp(frame / fps, ending.moments.fadeStart, ending.moments.fadeComplete);
+  return <AbsoluteFill>
     <Paper />
-    {BEATS.map((beat, index) => {
-      const Picture = pictures[index];
-      return <Sequence key={beat.id} from={toFrame(beat.start)} durationInFrames={toFrame(beat.end - beat.start)}><Picture language={language} /></Sequence>;
-    })}
-    <Captions language={language} />
-  </AbsoluteFill>
-);
+    <AbsoluteFill style={{ opacity }}>
+      {BEATS.map((beat, index) => {
+        const Picture = pictures[index];
+        return <Sequence key={beat.id} from={toFrame(beat.start)} durationInFrames={toFrame(beat.end - beat.start)}><Picture language={language} /></Sequence>;
+      })}
+      <Captions language={language} />
+    </AbsoluteFill>
+  </AbsoluteFill>;
+};
