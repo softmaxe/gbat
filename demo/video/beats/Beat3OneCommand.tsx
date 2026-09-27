@@ -1,7 +1,7 @@
 import { AbsoluteFill, interpolate } from "remotion";
 import type { Language } from "../../timeline";
 import { oneCommand } from "../../timeline/beats/beat3-one-command";
-import { clamp, ramp, useBeatTime } from "../anim";
+import { clamp, ramp, textAtTime, useBeatTime } from "../anim";
 import { Clicky } from "../characters/Clicky";
 import { HandDrawnTerminal, type TerminalLine } from "../components/HandDrawnTerminal";
 import { RedPenArrow, RedPenCircle, RedPenTick } from "../components/RedPen";
@@ -11,7 +11,6 @@ import { PALETTE } from "../theme";
 
 const m = oneCommand.moments;
 const [wireless, plugged] = oneCommand.readings;
-const typed = (t: number, times: number[]) => "gbat".slice(0, times.filter((time) => t >= time).length);
 const outline = { stroke: PALETTE.graphite, strokeWidth: 3, roughness: 1.1 };
 
 export const Beat3OneCommand: React.FC<{ language: Language }> = ({ language }) => {
@@ -20,9 +19,9 @@ export const Beat3OneCommand: React.FC<{ language: Language }> = ({ language }) 
   const reading = charging ? plugged : wireless;
   const signAt = charging ? m.chargingSign : m.sign;
   const holding = t >= signAt;
-  const lines: TerminalLine[] = [`$ ${typed(t, m.typing)}`];
+  const lines: TerminalLine[] = [`$ ${textAtTime("gbat", m.typing, t)}`];
   if (t >= m.reading) lines.push(wireless.output);
-  if (charging) lines.push(`$ ${typed(t, m.chargingTyping)}`);
+  if (charging) lines.push(`$ ${textAtTime("gbat", m.chargingTyping, t)}`);
   if (t >= m.chargingReading) lines.push(plugged.output);
   const cursor = t < m.request || charging && t < m.chargingRequest;
   const planeVisible = t >= m.request && t < m.mouse;

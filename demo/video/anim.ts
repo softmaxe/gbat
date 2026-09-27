@@ -10,6 +10,10 @@ export const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" } as 
 /** Clamped 0..1 ramp of `t` over [a, b]. */
 export const ramp = (t: number, a: number, b: number): number => interpolate(t, [a, b], [0, 1], clamp);
 
+/** Reveal one character at each typing timestamp. */
+export const textAtTime = (text: string, times: number[], t: number): string =>
+  text.slice(0, times.filter((time) => t >= time).length);
+
 /**
  * Time inside a Beat's visuals, which are mounted in a <Sequence> starting at
  * `beat.start`: the Beat-local `frame` (0 = Beat start), the `fps`, and `t`,

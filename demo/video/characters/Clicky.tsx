@@ -115,7 +115,7 @@ export const Clicky: React.FC<ClickyProps> = ({
   const arm = (side: -1 | 1, angle: number) => <g transform={`rotate(${side === -1 ? angle : -angle} ${side * 109} -91)`}>
     <PencilBlock x={side === -1 ? -158 : 106} y={-104} width={52} height={28} seed={seed + 20 + side} />
   </g>;
-  const sleeping = pose === "idle" || pose === "offline";
+  const idleOrOffline = pose === "idle" || pose === "offline";
   return <g transform={`translate(${x} ${y}) rotate(${rotate}) scale(${scale})`} opacity={opacity * reveal}>
     <g transform={`scale(${sideScale} 1)`}>
       <g transform={`translate(${motion.dx} ${motion.dy}) rotate(${motion.tilt}) scale(${bodyScaleX} ${motion.squash})`}>
@@ -149,7 +149,7 @@ export const Clicky: React.FC<ClickyProps> = ({
         <Mouth kind={motion.mouth} seed={seed + 9} />
         {pose === "hold" && <Sign text={signText} flip={flip} seed={seed + 40} />}
       </g>
-      {sleeping && <g transform={`translate(${pose === "offline" ? 155 : 118} ${pose === "offline" ? -145 : -203})`}>
+      {idleOrOffline && <g transform={`translate(${pose === "offline" ? 155 : 118} ${pose === "offline" ? -145 : -203})`}>
         {[0, 1, 2].slice(0, pose === "offline" ? 3 : 1).map((index) => <g key={index}
           transform={`translate(${index * 25} ${-index * 26 - Math.sin(time * 2 - index) * 5})`}
           opacity={0.55 + 0.2 * Math.sin(time * 2 - index)}>
