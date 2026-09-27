@@ -26,7 +26,8 @@ for (const language of LANGUAGES) {
     assert.equal(video.width, 1920);
     assert.equal(video.height, 1080);
     assert.equal(video.r_frame_rate, "30/1");
-    assert.equal(video.pix_fmt, "yuv420p");
+    // ffprobe names full-range JPEG-derived 4:2:0 output yuvj420p.
+    assert.ok(["yuv420p", "yuvj420p"].includes(video.pix_fmt), video.pix_fmt);
     assert.equal(audios[0].codec_name, "aac");
     for (const duration of [probe.format.duration, video.duration, audios[0].duration]) assert.ok(Math.abs(Number(duration) - 60) < 0.1);
   });
