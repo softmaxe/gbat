@@ -1,0 +1,6 @@
+/node_modules/
+/build/
+/audio/.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/

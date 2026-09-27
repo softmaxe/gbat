@@ -1,0 +1,33 @@
+{
+  "name": "gbat-film",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": "26.10.0"},
+  "scripts": {
+    "build": "tsx scripts/build.ts",
+    "studio": "remotion studio video/index.ts --public-dir video/public",
+    "timeline:export": "tsx scripts/export-timeline.ts",
+    "typecheck": "tsc --noEmit",
+    "test:timeline": "tsx --test tests/timeline.test.ts",
+    "test:audio": "npm run timeline:export && uv run --project audio pytest audio/tests -q",
+    "test:film": "tsx --test tests/film.test.ts",
+    "test": "npm run typecheck && npm run test:timeline && npm run test:audio && npm run test:film"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.529",
+    "@remotion/cli": "4.0.529",
+    "@remotion/renderer": "4.0.529",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "remotion": "4.0.529",
+    "roughjs": "4.6.6"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
+  }
+}
