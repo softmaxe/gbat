@@ -76,6 +76,23 @@ def test_battery_drain_lowers_the_pitch_and_ending_returns_to_tonic(score):
     assert abs(2 * tonic - pitches[0]) < 20
 
 
+def test_pitch_sag_stops_at_the_exported_collapse_before_the_caption_ends(tmp_path):
+    timeline = json.loads(json.dumps(TIMELINE))
+    opening = next(beat for beat in timeline["beats"] if beat["id"] == "opening")
+    caption = next(caption for caption in opening["captions"] if caption["id"] == "opening-charge")
+    caption.update(start=2.4, end=7.8)
+    opening["moments"] = {"drain": 2.4, "red": 4.7, "collapse": 5.3}
+    audio = run_cli(tmp_path, timeline, "score")
+    # Compare repetitions of the same root note before drain and after collapse.
+    repeat = 2 * 60 / 110
+    times = np.arange(opening["start"] + 0.07, opening["end"] - 0.1, repeat)
+    before = dominant_pitch(audio, times[times < opening["moments"]["drain"]][-1])
+    after = [dominant_pitch(audio, time) for time in times if time > opening["moments"]["collapse"]]
+    assert len(after) >= 2
+    assert max(after) - min(after) < 20
+    assert abs(2 * after[0] - before) < 20
+
+
 @pytest.mark.parametrize("shift", [0, -0.8])
 def test_charging_arpeggio_follows_the_caption_window(tmp_path, shift):
     timeline = json.loads(json.dumps(TIMELINE))
