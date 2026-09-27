@@ -64,6 +64,14 @@ def test_score_noise_is_reproducible(tmp_path, score):
     assert np.array_equal(run_cli(tmp_path, TIMELINE, "score"), score)
 
 
+def test_ending_music_timing_does_not_change_with_caption_end(tmp_path, score):
+    timeline = json.loads(json.dumps(TIMELINE))
+    ending = next(beat for beat in timeline["beats"] if beat["id"] == "ending")
+    caption = next(caption for caption in ending["captions"] if caption["id"] == "ending-install")
+    caption["end"] = ending["end"] - 1.5
+    assert np.array_equal(run_cli(tmp_path, timeline, "score"), score)
+
+
 def test_battery_drain_lowers_the_pitch_and_ending_returns_to_tonic(score):
     opening = next(beat for beat in TIMELINE["beats"] if beat["id"] == "opening")
     eighth = 60 / 110 / 2
