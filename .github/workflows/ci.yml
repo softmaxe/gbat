@@ -8,6 +8,7 @@ on:
       - "assets/**"
       - "raycast/**"
       - "demo.tape"
+      - "demo/**"
   push:
     branches:
       - main
