@@ -78,6 +78,34 @@ test("captions avoid the repository glossary's forbidden synonyms", () => {
   }
 });
 
+test("named visual moments stay inside their owning Beat", () => {
+  for (const beat of film.beats) for (const [name, moments] of Object.entries(beat.moments ?? {})) {
+    const times = Array.isArray(moments) ? moments : [moments];
+    assert.ok(times.length > 0, `${beat.id}.${name}`);
+    for (const [index, time] of times.entries()) {
+      assert.ok(Number.isFinite(time) && time >= beat.start && time < beat.end, `${beat.id}.${name}`);
+      if (index > 0) assert.ok(time >= times[index - 1], `${beat.id}.${name} is out of order`);
+    }
+  }
+});
+
+test("the film's actual reading data matches both README examples", () => {
+  const readings = film.beats.flatMap((beat) => beat.readings ?? []);
+  assert.ok(readings.length >= 2, "the exported timeline must include the displayed readings");
+  for (const file of ["README.md", "README.zh-CN.md"]) {
+    const markdown = fs.readFileSync(path.join(ROOT, "..", file), "utf8");
+    const examples = markdown.match(/```(?:text)?\n(Battery: [^`]+)\n```/)?.[1].split("\n");
+    assert.ok(examples?.length, `${file} must contain the battery example block`);
+    assert.deepEqual([...new Set(readings.map((reading) => reading.output))].sort(), [...examples].sort(), file);
+    for (const reading of readings) {
+      const match = reading.output.match(/^Battery: (\d+)%((?: \(charging\))?)$/);
+      assert.ok(match, reading.output);
+      assert.equal(reading.level, Number(match[1]), "Clicky's battery level must match its output");
+      assert.equal(reading.charging, Boolean(match[2]), "Clicky's charging state must match its output");
+    }
+  }
+});
+
 test("the bundled WOFF2 contains every caption glyph and fits the caption frame", () => {
   execFileSync("uv", ["run", "--project", "audio", "python", "scripts/check-font.py", exported], { cwd: ROOT, stdio: "pipe" });
 });
