@@ -41,13 +41,18 @@ for (const language of LANGUAGES) {
     }
   });
 
-  // Ticket #26 enables this check after the final score replaces the music bed.
-  test(`${language}: final second is below -40 dB`, { skip: process.env.CHECK_FINAL_SILENCE !== "1" }, () => {
+  test(`${language}: final second is below -40 dB`, () => {
     const pcm = execFileSync("ffmpeg", ["-v", "error", "-sseof", "-1", "-i", filmPath(language), "-vn", "-ac", "1", "-ar", "48000", "-f", "f32le", "-"], { maxBuffer: 1024 * 1024 });
     assert.ok(pcm.length >= 47000 * 4, "ffmpeg must decode the final audio second");
     let energy = 0;
-    for (let offset = 0; offset < pcm.length; offset += 4) energy += pcm.readFloatLE(offset) ** 2;
+    let peak = 0;
+    for (let offset = 0; offset < pcm.length; offset += 4) {
+      const sample = pcm.readFloatLE(offset);
+      energy += sample ** 2;
+      peak = Math.max(peak, Math.abs(sample));
+    }
     const rms = Math.sqrt(energy / (pcm.length / 4));
     assert.ok(20 * Math.log10(rms) < -40, `Final RMS: ${20 * Math.log10(rms)} dB`);
+    assert.ok(20 * Math.log10(peak) < -40, `Final peak: ${20 * Math.log10(peak)} dB`);
   });
 }
