@@ -35,6 +35,14 @@ Timeline tests inspect exported JSON, caption durations and ordering, vocabulary
 
 Use `npm run studio` for frame-by-frame review. The `GbatEnglish` and `GbatChinese` compositions share pictures and audio timing. Review the PNGs in both languages after changing a Beat; automated checks do not judge illustrations or text placement inside pictures.
 
+`ClickyCharacterSheet` previews all seven animated poses over six seconds. The build exports its one-second frame to `build/review/clicky-character-sheet.png`. To render only this sheet:
+
+```sh
+npx remotion still video/index.ts ClickyCharacterSheet build/review/clicky-character-sheet.png --frame=30 --public-dir=video/public
+```
+
+Scenes mount `Clicky` from `video/characters/Clicky` inside an SVG. Its `x` and `y` mark the ground between the feet, and `time` is seconds since the current pose began. Choose `play`, `collapse`, `idle`, `offline`, `wake`, `hold`, or `wave`; pass `batteryLevel` as a percentage and `charging` for charging cells. The `hold` pose accepts one or two short lines in `signText`. `BatteryCells` is also available as a standalone SVG health bar.
+
 ## Editing the film
 
 Each module in `timeline/beats/` owns its Beat's captions, sound cues, and review-frame times. All times are absolute seconds. The six Beats cover 0–8, 8–16, 16–30, 30–42, 42–52, and 52–60 seconds. Beat picture components run inside Remotion Sequences, so `useCurrentFrame()` starts at zero for each Beat. `useBeatTime()` converts that to absolute time. Use `cueTime(beat, id)` for actions that accompany sounds.

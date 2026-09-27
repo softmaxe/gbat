@@ -6,6 +6,10 @@ A one-shot macOS CLI that reads the battery status of a Logitech G Pro Wireless 
 
 ### Devices
 
+**Clicky**:
+The white wireless mouse character in gbat's explainer film, with a scroll-wheel nose and battery cells on its back that show its charge. Clicky acts out the mouse's Idle and Offline states and its response to a battery request.
+_Avoid_: Mascot, Clawd
+
 **Receiver**:
 The LIGHTSPEED USB dongle that relays HID++ traffic to the wireless mouse over its pairing slots.
 _Avoid_: Dongle, adapter
