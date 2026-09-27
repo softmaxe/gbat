@@ -37,7 +37,7 @@ Time from invoking gbat to the battery status line on stdout, while the mouse is
 _Avoid_: Reaction speed, response speed, responsiveness
 
 **Failure latency**:
-Time from invoking gbat to it giving up with an error, when the mouse is asleep, disconnected, or otherwise unreachable.
+Time from invoking gbat to it giving up with an error, when the mouse is Offline or otherwise unreachable.
 _Avoid_: Timeout (that names a mechanism, not the user-visible wait)
 
 **Footprint**:

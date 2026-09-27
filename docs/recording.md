@@ -16,6 +16,22 @@ The original Raycast animation shows the `Logitech Mouse Battery` command and
 
 The logo is static artwork. It contains no software version.
 
+## Explainer film
+
+The separate [`demo/` toolchain](../demo/README.md) builds a 60-second hand-drawn
+animation in English and Chinese. Its readings, `Battery: 78%` and
+`Battery: 42% (charging)`, are examples shared with the README text. They are
+not live output, and building the film does not query a mouse.
+
+After installing the demo dependencies, run `npm run build` from `demo/` to
+produce `demo/build/gbat-en.mp4`, `demo/build/gbat-zh-CN.mp4`, and PNG review
+frames in `demo/build/review/`. The demo README covers the local tests,
+single-frame previews, character sheet, and font subset maintenance.
+
+The film build leaves both existing recordings unchanged. Compression and
+embedding the film in the root READMEs are follow-up work; the real terminal
+GIF and original Raycast animation keep their existing roles.
+
 ## Record the terminal demo
 
 Install Rust and the recording tools, connect the mouse, and keep it awake:
