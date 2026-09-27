@@ -2,7 +2,7 @@ import { AbsoluteFill, interpolate } from "remotion";
 import type { Language } from "../../timeline";
 import { wakeIt } from "../../timeline/beats/beat4-wake-it";
 import { EXAMPLE_READINGS } from "../../timeline/readings";
-import { clamp, ramp, useBeatTime } from "../anim";
+import { clamp, ramp, textAtTime, useBeatTime } from "../anim";
 import { Clicky, type ClickyPose } from "../characters/Clicky";
 import { HandDrawnTerminal, type TerminalLine } from "../components/HandDrawnTerminal";
 import { RedPenArrow, RedPenCircle, RedPenTick } from "../components/RedPen";
@@ -15,7 +15,6 @@ const reading = EXAMPLE_READINGS.wireless;
 const idleYawn = wakeIt.cues.find((cue) => cue.id === "wake-idle-yawn")!;
 const offlineYawn = wakeIt.cues.find((cue) => cue.id === "wake-offline-yawn")!;
 const outline = { stroke: PALETTE.graphite, strokeWidth: 3, roughness: 1.1 };
-const typed = (t: number, times: number[]) => "gbat".slice(0, times.filter((time) => t >= time).length);
 
 export const Beat4WakeIt: React.FC<{ language: Language }> = ({ language }) => {
   const { t } = useBeatTime(wakeIt);
@@ -26,12 +25,12 @@ export const Beat4WakeIt: React.FC<{ language: Language }> = ({ language }) => {
   const waking = t >= yawn.time;
   const pose: ClickyPose = answered ? "hold" : waking ? "wake" : offline ? "offline" : "idle";
   const poseStart = answered ? answerAt : waking ? yawn.time : offline ? m.offline : wakeIt.start;
-  const lines: TerminalLine[] = [`$ ${typed(t, offline ? m.offlineTyping : m.idleTyping)}`];
+  const lines: TerminalLine[] = [`$ ${textAtTime("gbat", offline ? m.offlineTyping : m.idleTyping, t)}`];
   if (offline && t >= m.error) lines.push(
     { text: "The receiver reports no connected mouse.", color: PALETTE.accent },
     "Turn the mouse on or wake it, and retry.",
   );
-  if (offline && t >= m.retryTyping[0]) lines.push(`$ ${typed(t, m.retryTyping)}`);
+  if (offline && t >= m.retryTyping[0]) lines.push(`$ ${textAtTime("gbat", m.retryTyping, t)}`);
   if (answered) lines.push(reading.output);
   const requestAt = !offline ? m.idleRequest : t < m.retryRequest ? m.offlineRequest : m.retryRequest;
   const requestEnd = !offline ? idleYawn.time : t < m.retryRequest ? m.error : m.retryArrive;
