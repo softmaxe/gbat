@@ -47,6 +47,12 @@ Scenes mount `Clicky` from `video/characters/Clicky` inside an SVG. Its `x` and 
 
 Each module in `timeline/beats/` owns its Beat's captions, sound cues, and review-frame times. All times are absolute seconds. The six Beats cover 0–8, 8–16, 16–30, 30–42, 42–52, and 52–60 seconds. Beat picture components run inside Remotion Sequences, so `useCurrentFrame()` starts at zero for each Beat. `useBeatTime()` converts that to absolute time. Use `cueTime(beat, id)` for actions that accompany sounds.
 
+Optional Beat `moments` map action names to absolute seconds or arrays of typing timestamps. Define a sound and its visual action from the same moment value. The timeline test checks every moment is inside its Beat and every timestamp array is ordered.
+
+`timeline/readings.ts` supplies `EXAMPLE_READINGS.wireless` and `EXAMPLE_READINGS.charging`. Reuse their `output`, `level`, and `charging` fields for terminals and Clicky. Include displayed examples in the owning Beat's `readings` array so the exported-timeline test compares them with both READMEs.
+
+Shared SVG components live in `video/components/`. `HandDrawnPanel` positions children in panel-local coordinates. `HandDrawnTerminal` accepts a `lines` array of strings or `{text, color}` objects and clips crisp monospace text within its pencil frame. Scenes control typing and output by passing the currently visible strings. `RedPenCircle`, `RedPenStrike`, `RedPenTick`, and `RedPenArrow` accept canvas geometry and a `progress` reveal value from 0 to 1. Use fixed seeds to keep lines stable across parallel renders.
+
 Add a cue synthesizer at `audio/gbat_audio/cues/<kind>.py` with `synthesize(sample_rate) -> numpy.ndarray`, then add its cue to the owning Beat. The public audio command is:
 
 ```sh
