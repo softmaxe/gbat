@@ -85,11 +85,11 @@ def synthesize(timeline: dict, sample_rate: int) -> np.ndarray:
                     opening_moments.get("collapse", drain["end"]))
     charging = captions["command-charge"]
     ending = beats["ending"]
-    farewell = captions["ending-install"]
     # Finish slightly before the last second so AAC overlap cannot leak the fade.
     silence = ending["end"] - 1.08
-    resolve = max(ending["start"], min(farewell["end"], silence) - 4 * QUARTER)
-    fade_start = max(resolve, min(farewell["end"] - QUARTER, silence - QUARTER))
+    # Resolve for the final bar, then fade over its last two quarter notes.
+    resolve = max(ending["start"], silence - 4 * QUARTER)
+    fade_start = max(resolve, silence - 2 * QUARTER)
     rng = np.random.default_rng(110)
 
     for beat in beats.values():
