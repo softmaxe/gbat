@@ -77,7 +77,7 @@ reports that the mouse is offline, turn it on or move it, then retry.
   <img src="assets/demo.gif" alt="gbat version, battery output, and Raycast script demo" width="700">
 </p>
 
-This terminal demo shows real battery readings from `gbat 1.0.0`. It is a
+This terminal demo shows real battery readings from `gbat 0.0.1`. It is a
 historical recording, so its version may differ from the current release.
 See [recording details](docs/recording.md) for its source and update instructions.
 
