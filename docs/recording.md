@@ -1,15 +1,15 @@
 # README recordings
 
-The terminal animation was captured on September 17, 2026, on macOS 27.0 with a
+The terminal animation was captured on October 13, 2026, on macOS 27.0.1 with a
 connected Logitech mouse. Its battery readings are live output.
 The Raycast animation is the original GitHub asset and is kept unchanged.
 
 | Asset | Captured version | Source |
 | --- | --- | --- |
-| [`demo.gif`](../assets/demo.gif) | `gbat 1.0.0` | Local release build of `1.0.0`, from history before the repository was reset |
+| [`demo.gif`](../assets/demo.gif) | `gbat 0.0.1` | Local release build of `0.0.1` |
 | [`raycast-demo.webp`](../assets/raycast-demo.webp) | Original capture; software versions not recorded | Original GitHub asset, retained unchanged |
 
-The terminal demo shows the binary's own `--version` output and `Battery: 88%`.
+The terminal demo shows the binary's own `--version` output and `Battery: 61%`.
 A later terminal recording may show a different level or charging state.
 The original Raycast animation shows the `Logitech Mouse Battery` command and
 `Battery: 86%`. It demonstrates the workflow without identifying a gbat release.
@@ -36,7 +36,7 @@ are removed on exit. This avoids a VHS `0.12.0` issue where the recording contex
 is cancelled before rendering, leaving the existing GIF untouched despite a
 successful exit. See the upstream [render call](https://github.com/charmbracelet/vhs/blob/v0.12.0/evaluator.go#L187).
 
-The checked-in capture used VHS `0.12.0`, ttyd `1.7.7`, and FFmpeg `9.0.1`.
+The checked-in capture used VHS `0.12.1`, ttyd `1.7.7`, and FFmpeg `9.0.2`.
 If you change the tape's dimensions, frame rate, padding, theme, or window bar,
 update the matching FFmpeg settings in [`record-demo.sh`](record-demo.sh).
 

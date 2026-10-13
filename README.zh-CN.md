@@ -67,7 +67,7 @@ gbat
   <img src="assets/demo.gif" alt="gbat 版本、电量输出和 Raycast 脚本演示" width="700">
 </p>
 
-这段终端演示使用 `gbat 1.0.0` 读取真实鼠标电量。录屏保留了当时的版本，可能与当前 Release 不同。源码版本和更新方法见[录屏说明](docs/recording.md)。
+这段终端演示使用 `gbat 0.0.1` 读取真实鼠标电量。录屏保留了当时的版本，可能与当前 Release 不同。源码版本和更新方法见[录屏说明](docs/recording.md)。
 
 ## Raycast
 
