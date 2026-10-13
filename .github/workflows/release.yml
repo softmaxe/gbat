@@ -38,6 +38,19 @@ jobs:
           # that would otherwise be able to read the token out of .git/config.
           persist-credentials: false
 
+      - name: Require the tag to point at a commit on main
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # "behind" or "identical" means the tagged commit is already part of main.
+          status="$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$GITHUB_SHA" --jq .status)"
+          if [[ "$status" != "behind" && "$status" != "identical" ]]; then
+            echo "::error::$GITHUB_REF_NAME points at $GITHUB_SHA, which is not on main (compare status: $status)."
+            exit 1
+          fi
+
       - name: Resolve version
         id: version
         run: |
@@ -135,6 +148,8 @@ jobs:
       - release
     runs-on: macos-15
     timeout-minutes: 20
+    # The environment only admits v*.*.* tags, which scopes the tap token to releases.
+    environment: homebrew-tap
     concurrency:
       group: homebrew-tap-gbat
       cancel-in-progress: false
@@ -199,6 +214,19 @@ jobs:
         working-directory: homebrew-tap
         run: |
           set -euo pipefail
+          if [[ -f Formula/gbat.rb ]]; then
+            current_version="$(sed -nE 's/.*-v([0-9]+\.[0-9]+\.[0-9]+)-.*/\1/p' Formula/gbat.rb | head -n 1)"
+            if [[ -z "$current_version" ]]; then
+              echo "Existing Formula/gbat.rb has no version" >&2
+              exit 1
+            fi
+            newest_version="$(printf '%s\n' "$current_version" "$VERSION" | sort -V | tail -n 1)"
+            if [[ "$current_version" != "$VERSION" && "$newest_version" = "$current_version" ]]; then
+              echo "Refusing to replace newer Formula $current_version with $VERSION" >&2
+              exit 1
+            fi
+          fi
+
           install -m 0644 "$RUNNER_TEMP/gbat.rb" Formula/gbat.rb
           git add Formula/gbat.rb
           if git diff --cached --quiet; then
