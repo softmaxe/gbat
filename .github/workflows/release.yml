@@ -68,11 +68,9 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Test and build
-        run: |
-          set -euo pipefail
-          cargo test --locked
-          cargo build --release --locked
+      # No tests here: the tag must point at main, and every commit on main passed "Check".
+      - name: Build
+        run: cargo build --release --locked
 
       - name: Verify and package binary
         id: package

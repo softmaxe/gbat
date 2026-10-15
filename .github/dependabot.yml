@@ -4,6 +4,9 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # Let new releases age before adopting them, so a compromised version is likely yanked first.
+    cooldown:
+      default-days: 7
     groups:
       github-actions:
         patterns: ["*"]
@@ -14,6 +17,9 @@ updates:
     directory: /
     schedule:
       interval: monthly
+    # Let new releases age before adopting them, so a compromised version is likely yanked first.
+    cooldown:
+      default-days: 7
     groups:
       cargo:
         patterns: ["*"]

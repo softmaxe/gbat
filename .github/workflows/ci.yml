@@ -1,18 +1,9 @@
 name: CI
 
 on:
-  # No paths-ignore here: "Check" is a required check, so it must report on every
-  # pull request. Docs-only pull requests skip the job instead (see `changes`).
+  # Pull requests only: "Check" is a required check with the up-to-date policy, and main
+  # only takes squash merges, so every commit on main has already passed it.
   pull_request:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - "assets/**"
-      - "raycast/**"
-      - "demo.tape"
 
 permissions:
   contents: read
@@ -26,40 +17,8 @@ env:
   MACOSX_DEPLOYMENT_TARGET: "11.0"
 
 jobs:
-  changes:
-    name: Detect changes
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    permissions:
-      pull-requests: read
-    outputs:
-      code: ${{ steps.filter.outputs.code }}
-    steps:
-      # Only GitHub-owned actions are allowed in this repository, so filter with the gh CLI.
-      - name: Filter changed paths
-        id: filter
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          files=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename')
-          code=false
-          while IFS= read -r file; do
-            case "$file" in
-              *.md | docs/* | assets/* | raycast/* | demo.tape | "") ;;
-              *) code=true ;;
-            esac
-          done <<< "$files"
-          echo "code=$code" >> "$GITHUB_OUTPUT"
-
   check:
     name: Check
-    needs: changes
-    # A skipped job still satisfies the required check, so docs-only pull requests can merge.
-    # Skip only when the filter ran and found no code changes; any other outcome runs the checks.
-    if: ${{ !cancelled() && !(needs.changes.result == 'success' && needs.changes.outputs.code == 'false') }}
     # macos-15 is arm64, so the host target is the only one gbat ships.
     runs-on: macos-15
     timeout-minutes: 15
