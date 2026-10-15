@@ -1,7 +1,9 @@
+mod hidpp;
+
 use std::process::ExitCode;
 
-use gbat::hidpp::{open_first_working_transport, read_battery, BatteryStatus, Discovery};
 use hidapi::HidApi;
+use hidpp::{open_first_working_transport, read_battery, BatteryStatus, Discovery};
 
 fn main() -> ExitCode {
     if std::env::args().nth(1).as_deref() == Some("--version") {
@@ -58,8 +60,7 @@ fn format_status(status: BatteryStatus) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::format_status;
-    use gbat::hidpp::BatteryStatus;
+    use super::{format_status, BatteryStatus};
 
     #[test]
     fn formats_battery_status_for_terminal_and_raycast() {
