@@ -10,6 +10,10 @@ A one-shot macOS CLI that reads the battery status of a Logitech G Pro Wireless 
 The LIGHTSPEED USB dongle that relays HID++ traffic to the wireless mouse over its pairing slots.
 _Avoid_: Dongle, adapter
 
+**HID interface**:
+One Logitech interface on the HID++ usage page that macOS enumerates; a receiver or a USB-connected mouse can expose several, and gbat probes each one at every device index.
+_Avoid_: Interface (alone), HID device, transport
+
 **Device index**:
 The HID++ address of a device: a receiver pairing slot (1–6), or 0xFF for a mouse connected directly over USB.
 _Avoid_: Slot number, device ID
