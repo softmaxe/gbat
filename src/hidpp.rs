@@ -112,31 +112,25 @@ enum FeatureLookup {
     Silent,
 }
 
-/// What probing one device index, or every interface and device index, found.
-#[derive(Debug)]
-pub enum Discovery<D> {
-    Found(D),
+/// What probing one device index found.
+enum Discovery {
+    Found(BatteryFeature),
     /// A receiver answered, but reported no connected mouse.
     Offline,
     NotFound,
 }
 
-impl<D> Discovery<D> {
-    fn map<E>(self, found: impl FnOnce(D) -> E) -> Discovery<E> {
-        match self {
-            Self::Found(value) => Discovery::Found(found(value)),
-            Self::Offline => Discovery::Offline,
-            Self::NotFound => Discovery::NotFound,
-        }
-    }
-}
-
-/// An open HID++ interface with the device index and battery feature that
-/// discovery selected.
-pub struct HidppTransport {
-    device: HidDevice,
-    device_index: u8,
-    battery_feature: BatteryFeature,
+/// What reading the battery through every candidate HID interface found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reading {
+    Status(BatteryStatus),
+    /// A device index exposed a battery feature, but reading it produced no
+    /// status.
+    NoStatus,
+    /// A receiver answered, but reported no connected mouse.
+    Offline,
+    /// No HID interface answered at any device index.
+    NotFound,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,10 +320,7 @@ impl<Io: RequestIo> Device<'_, Io> {
         })
     }
 
-    fn find_battery_feature(
-        &self,
-        deadline: Instant,
-    ) -> Result<Discovery<BatteryFeature>, HidppError> {
+    fn find_battery_feature(&self, deadline: Instant) -> Result<Discovery, HidppError> {
         let unified =
             self.lookup_feature(FEATURE_UNIFIED_BATTERY, request_timeout(self.io, deadline))?;
         match unified {
@@ -369,7 +360,7 @@ impl<Io: RequestIo> Device<'_, Io> {
 
     /// Read the discovered feature. A unified read that fails to produce a
     /// status falls back to the legacy feature, unless the transport failed.
-    fn read_battery(&self, feature: BatteryFeature) -> Result<Option<BatteryStatus>, HidppError> {
+    fn read_feature(&self, feature: BatteryFeature) -> Result<Option<BatteryStatus>, HidppError> {
         if matches!(feature, BatteryFeature::Legacy(_)) {
             return self.query_battery(feature);
         }
@@ -395,14 +386,6 @@ impl<Io: RequestIo> Device<'_, Io> {
     }
 }
 
-pub fn read_battery(transport: &HidppTransport) -> Result<Option<BatteryStatus>, HidppError> {
-    Device {
-        io: &transport.device,
-        index: transport.device_index,
-    }
-    .read_battery(transport.battery_feature)
-}
-
 fn candidate_interfaces(api: &HidApi) -> Vec<&hidapi::DeviceInfo> {
     let mut candidates = api
         .device_list()
@@ -418,58 +401,80 @@ fn candidate_interfaces(api: &HidApi) -> Vec<&hidapi::DeviceInfo> {
     candidates
 }
 
-/// A probed interface, opened on first use and reused across device indices.
-enum ProbeSlot {
-    Unopened,
-    Open(HidDevice),
+fn open_interface(api: &HidApi, info: &hidapi::DeviceInfo) -> Result<HidDevice, HidppError> {
+    let interface = api.open_path(info.path())?;
+    interface.set_blocking_mode(false)?;
+    Ok(interface)
+}
+
+/// Read the battery status through the first candidate HID interface and
+/// device index that expose a battery feature.
+pub fn read_battery(api: &HidApi) -> Result<Reading, HidppError> {
+    let interfaces = candidate_interfaces(api)
+        .into_iter()
+        .map(|info| move || open_interface(api, info));
+    read_battery_from(interfaces, Instant::now)
+}
+
+/// A HID interface, opened on first use and reused across device indices.
+enum Slot<Open, Io> {
+    Unopened(Open),
+    Open(Io),
     Failed,
 }
 
-fn open_probe_device(api: &HidApi, info: &hidapi::DeviceInfo) -> Result<HidDevice, HidppError> {
-    let device = api.open_path(info.path())?;
-    device.set_blocking_mode(false)?;
-    Ok(device)
-}
-
-/// The interface in this slot, opened on first use. Only the first failed open
-/// reports its error; later probes skip the slot.
-fn probe_device<'slot>(
-    api: &HidApi,
-    info: &hidapi::DeviceInfo,
-    slot: &'slot mut ProbeSlot,
-) -> Result<Option<&'slot HidDevice>, HidppError> {
-    if matches!(slot, ProbeSlot::Unopened) {
-        match open_probe_device(api, info) {
-            Ok(device) => *slot = ProbeSlot::Open(device),
-            Err(error) => {
-                *slot = ProbeSlot::Failed;
-                return Err(error);
-            }
-        }
+impl<Open: FnOnce() -> Result<Io, HidppError>, Io> Slot<Open, Io> {
+    /// The open HID interface, or `None` if it failed to open. Only the first
+    /// failed open reports its error; later probes skip the slot.
+    fn open(&mut self) -> Result<Option<&Io>, HidppError> {
+        *self = match std::mem::replace(self, Self::Failed) {
+            Self::Unopened(open) => Self::Open(open()?),
+            slot => slot,
+        };
+        Ok(match self {
+            Self::Open(io) => Some(io),
+            Self::Unopened(_) | Self::Failed => None,
+        })
     }
-    Ok(match slot {
-        ProbeSlot::Open(device) => Some(device),
-        ProbeSlot::Unopened | ProbeSlot::Failed => None,
-    })
 }
 
-/// Probe index-major: the likely indices on every interface come before the
-/// unlikely ones on the first interface.
-fn discover<D>(
-    interface_count: usize,
-    deadline: Instant,
+/// Probe index-major, so the likely device indices on every HID interface come
+/// before the unlikely ones on the first, then read the first battery feature
+/// found. `interfaces` open the candidate HID interfaces in probe order.
+fn read_battery_from<Io: RequestIo>(
+    interfaces: impl IntoIterator<Item = impl FnOnce() -> Result<Io, HidppError>>,
     now: impl Fn() -> Instant,
-    mut probe: impl FnMut(usize, u8) -> Result<Discovery<D>, HidppError>,
-) -> Result<Discovery<D>, HidppError> {
+) -> Result<Reading, HidppError> {
+    let mut slots = interfaces
+        .into_iter()
+        .map(Slot::Unopened)
+        .collect::<Vec<_>>();
+    let deadline = now() + DISCOVERY_BUDGET;
     let mut offline = false;
     let mut last_error = None;
-    'probe: for device_index in DEVICE_INDEX_CANDIDATES {
-        for interface in 0..interface_count {
+    'probe: for index in DEVICE_INDEX_CANDIDATES {
+        for slot in &mut slots {
             if now() >= deadline {
                 break 'probe;
             }
-            match probe(interface, device_index) {
-                Ok(Discovery::Found(found)) => return Ok(Discovery::Found(found)),
+            let io = match slot.open() {
+                Ok(Some(io)) => io,
+                Ok(None) => continue,
+                Err(error) => {
+                    last_error = Some(error);
+                    continue;
+                }
+            };
+            let device = Device { io, index };
+            match device.find_battery_feature(deadline) {
+                // The first battery feature found ends discovery, even if
+                // reading it fails.
+                Ok(Discovery::Found(feature)) => {
+                    return Ok(match device.read_feature(feature)? {
+                        Some(status) => Reading::Status(status),
+                        None => Reading::NoStatus,
+                    });
+                }
                 Ok(Discovery::Offline) => offline = true,
                 Ok(Discovery::NotFound) => {}
                 Err(error) => last_error = Some(error),
@@ -477,56 +482,21 @@ fn discover<D>(
         }
     }
     // The receiver's own report explains the failure better than an error from
-    // another interface.
+    // another HID interface.
     if offline {
-        return Ok(Discovery::Offline);
+        return Ok(Reading::Offline);
     }
     match last_error {
         Some(error) => Err(error),
-        None => Ok(Discovery::NotFound),
+        None => Ok(Reading::NotFound),
     }
-}
-
-pub fn open_first_working_transport(api: &HidApi) -> Result<Discovery<HidppTransport>, HidppError> {
-    let candidates = candidate_interfaces(api);
-    let mut slots = candidates
-        .iter()
-        .map(|_| ProbeSlot::Unopened)
-        .collect::<Vec<_>>();
-    let deadline = Instant::now() + DISCOVERY_BUDGET;
-
-    discover(
-        candidates.len(),
-        deadline,
-        Instant::now,
-        |interface, device_index| {
-            let slot = &mut slots[interface];
-            let Some(device) = probe_device(api, candidates[interface], slot)? else {
-                return Ok(Discovery::NotFound);
-            };
-            let outcome = Device {
-                io: device,
-                index: device_index,
-            }
-            .find_battery_feature(deadline)?;
-            Ok(outcome.map(|battery_feature| {
-                let ProbeSlot::Open(device) = std::mem::replace(slot, ProbeSlot::Failed) else {
-                    unreachable!("a found battery feature comes from an open interface");
-                };
-                HidppTransport {
-                    device,
-                    device_index,
-                    battery_feature,
-                }
-            }))
-        },
-    )
 }
 
 #[cfg(test)]
 mod tests {
     use std::cell::{Cell, RefCell};
     use std::collections::VecDeque;
+    use std::iter;
     use std::rc::Rc;
 
     use super::*;
@@ -538,17 +508,21 @@ mod tests {
     const UNIFIED_FEATURE: [u8; 7] = [REPORT_ID_SHORT, 1, 0, 0x0F, 5, 0, 0];
     const LEGACY_FEATURE: [u8; 7] = [REPORT_ID_SHORT, 1, 0, 0x0F, 6, 0, 0];
     const LEGACY_STATUS: [u8; 7] = [REPORT_ID_SHORT, 1, 6, 0x0F, 42, 0, 0x81];
-    const LEGACY_LEVEL: BatteryStatus = BatteryStatus {
+    const LEGACY_READING: Reading = Reading::Status(BatteryStatus {
         level: 42,
         charging: true,
-    };
+    });
     /// A unified status reply that lacks the charging byte.
     const INCOMPLETE_UNIFIED: [u8; 7] = [REPORT_ID_SHORT, 1, 5, 0x1F, 99, 0, 0];
-    // Captured from a LIGHTSPEED receiver while its paired mouse was off.
-    const RECEIVER_OFFLINE: [u8; 7] = [REPORT_ID_SHORT, 1, 0x8F, 0, 0x0F, 0x08, 0];
+    const RECEIVER_OFFLINE: [u8; 7] = receiver_offline(1);
 
     const fn unified_lookup(device_index: u8) -> [u8; 7] {
         [REPORT_ID_SHORT, device_index, 0, 0x0F, 0x10, 0x04, 0]
+    }
+
+    // Captured from a LIGHTSPEED receiver while its paired mouse was off.
+    const fn receiver_offline(device_index: u8) -> [u8; 7] {
+        [REPORT_ID_SHORT, device_index, 0x8F, 0, 0x0F, 0x08, 0]
     }
 
     fn report(bytes: &[u8]) -> Report {
@@ -560,8 +534,8 @@ mod tests {
         }
     }
 
-    fn at(io: &ScriptedIo, index: u8) -> Device<'_, ScriptedIo> {
-        Device { io, index }
+    fn status(level: u8, charging: bool) -> Reading {
+        Reading::Status(BatteryStatus { level, charging })
     }
 
     fn ms(millis: u64) -> Duration {
@@ -633,30 +607,32 @@ mod tests {
         steps
     }
 
+    /// Device index 1 reports the unified battery feature at index 5.
+    fn found_unified() -> Vec<ScriptStep> {
+        exchange(&UNIFIED_LOOKUP, [reply(&UNIFIED_FEATURE)])
+    }
+
+    fn offline_probe(device_index: u8) -> Vec<ScriptStep> {
+        exchange(
+            &unified_lookup(device_index),
+            [reply(&receiver_offline(device_index))],
+        )
+    }
+
+    fn silent_probe(device_index: u8) -> Vec<ScriptStep> {
+        exchange(&unified_lookup(device_index), [no_reply()])
+    }
+
     /// Plays back an exact sequence of I/O calls on a virtual clock. Any call
     /// the script does not expect fails the test, and so does any step still
     /// unplayed when the script is dropped.
     struct ScriptedIo {
-        // Sharing this cell keeps multiple scripted interfaces on one timeline.
+        // Sharing this cell keeps every scripted HID interface on one timeline.
         clock: Rc<Cell<Instant>>,
-        start: Instant,
         steps: RefCell<VecDeque<ScriptStep>>,
     }
 
     impl ScriptedIo {
-        fn new<S: IntoIterator<Item = ScriptStep>>(parts: impl IntoIterator<Item = S>) -> Self {
-            let start = Instant::now();
-            Self {
-                clock: Rc::new(Cell::new(start)),
-                start,
-                steps: RefCell::new(parts.into_iter().flatten().collect()),
-            }
-        }
-
-        fn elapsed(&self) -> Duration {
-            self.now() - self.start
-        }
-
         fn next_step(&self, call: &str) -> ScriptStep {
             self.steps
                 .borrow_mut()
@@ -710,30 +686,40 @@ mod tests {
         }
     }
 
-    /// Discover the battery feature on `device_index`, then read it.
-    fn probe_and_read(
-        io: &ScriptedIo,
-        device_index: u8,
-    ) -> Result<Option<BatteryStatus>, HidppError> {
-        let Ok(Discovery::Found(battery_feature)) =
-            at(io, device_index).find_battery_feature(io.now() + DISCOVERY_BUDGET)
-        else {
-            panic!("a battery feature should be found on device index {device_index}");
-        };
-        at(io, device_index).read_battery(battery_feature)
+    /// A scripted HID interface: the I/O it plays once opened, or the error
+    /// that opening it fails with.
+    type Interface = Result<Vec<ScriptStep>, HidError>;
+
+    /// One HID interface that plays `parts` in order.
+    fn script(parts: impl IntoIterator<Item = Vec<ScriptStep>>) -> Interface {
+        Ok(parts.into_iter().flatten().collect())
     }
 
-    /// Discover on a single interface.
-    fn discover_single(
-        io: &ScriptedIo,
-        deadline: Instant,
-    ) -> Result<Discovery<BatteryFeature>, HidppError> {
-        discover(
-            1,
-            deadline,
-            || io.now(),
-            |_, device_index| at(io, device_index).find_battery_feature(deadline),
-        )
+    /// Read the battery through scripted HID interfaces on one virtual clock,
+    /// returning the outcome and the virtual time it took.
+    fn read_scripted(
+        interfaces: impl IntoIterator<Item = Interface>,
+    ) -> (Result<Reading, HidppError>, Duration) {
+        let start = Instant::now();
+        let clock = Rc::new(Cell::new(start));
+        let openers = interfaces.into_iter().map(|interface| {
+            let clock = Rc::clone(&clock);
+            move || {
+                Ok(ScriptedIo {
+                    clock,
+                    steps: RefCell::new(interface?.into()),
+                })
+            }
+        });
+        let result = read_battery_from(openers, || clock.get());
+        (result, clock.get() - start)
+    }
+
+    /// Read the battery through one scripted HID interface.
+    fn read_one(
+        parts: impl IntoIterator<Item = Vec<ScriptStep>>,
+    ) -> (Result<Reading, HidppError>, Duration) {
+        read_scripted([script(parts)])
     }
 
     fn assert_short_response<T: fmt::Debug>(
@@ -796,7 +782,7 @@ mod tests {
 
         #[test]
         fn skips_unrelated_reports_and_errors_until_the_matching_reply() {
-            let io = ScriptedIo::new([
+            let (result, _) = read_one([
                 exchange(
                     &UNIFIED_LOOKUP,
                     [
@@ -816,13 +802,7 @@ mod tests {
                 ),
             ]);
 
-            assert_eq!(
-                probe_and_read(&io, 1).unwrap(),
-                Some(BatteryStatus {
-                    level: 78,
-                    charging: true,
-                })
-            );
+            assert_eq!(result.unwrap(), status(78, true));
         }
 
         #[test]
@@ -844,7 +824,14 @@ mod tests {
                     ]);
                     report
                 };
-                let io = ScriptedIo::new([
+                // Direct USB is only probed after the receiver slot.
+                let earlier_probes = if device_index == 1 {
+                    vec![]
+                } else {
+                    offline_probe(1)
+                };
+                let (result, _) = read_one([
+                    earlier_probes,
                     vec![ScriptStep::flush(&[
                         REPORT_ID_SHORT,
                         device_index,
@@ -873,10 +860,7 @@ mod tests {
                     ),
                 ]);
 
-                assert_eq!(
-                    probe_and_read(&io, device_index).unwrap(),
-                    Some(BatteryStatus { level, charging })
-                );
+                assert_eq!(result.unwrap(), status(level, charging));
             }
         }
 
@@ -889,47 +873,34 @@ mod tests {
                 [REPORT_ID_LONG, 1, ERROR_MARKER_HIDPP20, 0, 0x0F, 0x08, 0],
             ] {
                 // Reading the selected legacy feature skips the unified query.
-                let io = ScriptedIo::new([
+                let (result, _) = read_one([
                     exchange(&UNIFIED_LOOKUP, [reply(&unified_reply)]),
                     exchange(&LEGACY_LOOKUP, [reply(&LEGACY_FEATURE)]),
                     exchange(&LEGACY_QUERY, [reply(&LEGACY_STATUS)]),
                 ]);
 
-                assert_eq!(probe_and_read(&io, 1).unwrap(), Some(LEGACY_LEVEL));
+                assert_eq!(result.unwrap(), LEGACY_READING);
             }
         }
 
         #[test]
-        fn receiver_offline_ends_the_probe_without_waiting_or_legacy_lookup() {
+        fn an_offline_receiver_ends_each_probe_without_waiting_or_legacy_lookup() {
             let reply_delay = ms(17);
-            let io = ScriptedIo::new([exchange(
-                &UNIFIED_LOOKUP,
-                [reply(&RECEIVER_OFFLINE).after(reply_delay)],
-            )]);
+            let (result, elapsed) = read_one(DEVICE_INDEX_CANDIDATES.map(|device_index| {
+                exchange(
+                    &unified_lookup(device_index),
+                    [reply(&receiver_offline(device_index)).after(reply_delay)],
+                )
+            }));
 
-            let result = at(&io, 1).find_battery_feature(io.now() + DISCOVERY_BUDGET);
-
-            assert!(matches!(result, Ok(Discovery::Offline)));
-            assert_eq!(io.elapsed(), reply_delay);
-        }
-
-        #[test]
-        fn silence_after_an_unmatched_reply_skips_legacy_lookup() {
-            let io = ScriptedIo::new([exchange(
-                &UNIFIED_LOOKUP,
-                [reply(&[REPORT_ID_SHORT, 2, 0, 0x0F, 5, 0, 0]), no_reply()],
-            )]);
-
-            let result = at(&io, 1).find_battery_feature(io.now() + DISCOVERY_BUDGET);
-
-            assert!(matches!(result, Ok(Discovery::NotFound)));
-            assert_eq!(io.elapsed(), RESPONSE_TIMEOUT);
+            assert!(matches!(result, Ok(Reading::Offline)));
+            assert_eq!(elapsed, reply_delay * 7);
         }
 
         #[test]
         fn continues_from_an_offline_receiver_to_direct_usb() {
-            let io = ScriptedIo::new([
-                exchange(&UNIFIED_LOOKUP, [reply(&RECEIVER_OFFLINE)]),
+            let (result, _) = read_one([
+                offline_probe(1),
                 exchange(
                     &unified_lookup(0xFF),
                     [reply(&[REPORT_ID_SHORT, 0xFF, 0, 0x0F, 9, 0, 0])],
@@ -939,70 +910,34 @@ mod tests {
                     [reply(&[REPORT_ID_LONG, 0xFF, 9, 0x1F, 53, 0, 0, 1])],
                 ),
             ]);
-            let deadline = io.now() + DISCOVERY_BUDGET;
 
-            let found = discover(
-                1,
-                deadline,
-                || io.now(),
-                |_, device_index| {
-                    Ok(at(&io, device_index)
-                        .find_battery_feature(deadline)?
-                        .map(|battery_feature| (device_index, battery_feature)))
-                },
-            );
-
-            let Ok(Discovery::Found((device_index, battery_feature))) = found else {
-                panic!("discovery should continue to the direct USB candidate");
-            };
-            assert_eq!(
-                at(&io, device_index).read_battery(battery_feature).unwrap(),
-                Some(BatteryStatus {
-                    level: 53,
-                    charging: true,
-                })
-            );
+            assert_eq!(result.unwrap(), status(53, true));
         }
 
         #[test]
         fn checks_likely_indices_on_every_interface_first() {
-            let first = ScriptedIo::new([
-                exchange(&UNIFIED_LOOKUP, [reply(&RECEIVER_OFFLINE)]),
-                exchange(
-                    &unified_lookup(0xFF),
-                    [reply(&[REPORT_ID_SHORT, 0xFF, 0x8F, 0, 0x0F, 0x08, 0])],
-                ),
+            let (result, _) = read_scripted([
+                script([offline_probe(1), offline_probe(0xFF)]),
+                script([
+                    offline_probe(1),
+                    exchange(
+                        &unified_lookup(0xFF),
+                        [reply(&[REPORT_ID_SHORT, 0xFF, 0, 0x0F, 9, 0, 0])],
+                    ),
+                    exchange(
+                        &[REPORT_ID_SHORT, 0xFF, 9, 0x1F, 0, 0, 0],
+                        [reply(&[REPORT_ID_LONG, 0xFF, 9, 0x1F, 53, 0, 0, 1])],
+                    ),
+                ]),
             ]);
-            let mut second = ScriptedIo::new([
-                exchange(&UNIFIED_LOOKUP, [reply(&RECEIVER_OFFLINE)]),
-                exchange(
-                    &unified_lookup(0xFF),
-                    [reply(&[REPORT_ID_SHORT, 0xFF, 0, 0x0F, 9, 0, 0])],
-                ),
-            ]);
-            second.clock = Rc::clone(&first.clock);
-            let interfaces = [first, second];
-            let deadline = interfaces[0].now() + DISCOVERY_BUDGET;
 
-            let result = discover(
-                interfaces.len(),
-                deadline,
-                || interfaces[0].now(),
-                |interface, device_index| {
-                    at(&interfaces[interface], device_index).find_battery_feature(deadline)
-                },
-            );
-
-            assert!(matches!(
-                result,
-                Ok(Discovery::Found(BatteryFeature::Unified(9)))
-            ));
+            assert_eq!(result.unwrap(), status(53, true));
         }
 
         #[test]
         fn offline_outranks_later_errors_while_preserving_candidate_order() {
             for offline_first in [true, false] {
-                let io = ScriptedIo::new([1, 0xFF, 2, 3, 4, 5, 6].map(|device_index| {
+                let (result, _) = read_one(DEVICE_INDEX_CANDIDATES.map(|device_index| {
                     let truncated = [REPORT_ID_SHORT, device_index, 0, 0x0F];
                     let answer = if offline_first && device_index == 1 {
                         reply(&RECEIVER_OFFLINE)
@@ -1012,137 +947,183 @@ mod tests {
                     exchange(&unified_lookup(device_index), [answer])
                 }));
 
-                let result = discover_single(&io, io.now() + DISCOVERY_BUDGET);
-
                 if offline_first {
-                    assert!(matches!(result, Ok(Discovery::Offline)));
+                    assert!(matches!(result, Ok(Reading::Offline)));
                 } else {
                     assert_short_response(result, 5, 4);
                 }
             }
+        }
+
+        #[test]
+        fn an_interface_that_fails_to_open_is_skipped() {
+            let unopenable = || Err(HidError::InitializationError);
+
+            // A later HID interface that finds the battery hides the open error.
+            let (result, _) = read_scripted([
+                unopenable(),
+                script([
+                    found_unified(),
+                    exchange(
+                        &UNIFIED_QUERY,
+                        [reply(&[REPORT_ID_LONG, 1, 5, 0x1F, 78, 0, 0, 1])],
+                    ),
+                ]),
+            ]);
+            assert_eq!(result.unwrap(), status(78, true));
+
+            // So does an offline receiver.
+            let (result, _) = read_scripted([
+                unopenable(),
+                script(DEVICE_INDEX_CANDIDATES.map(offline_probe)),
+            ]);
+            assert!(matches!(result, Ok(Reading::Offline)));
+
+            // Otherwise the open error explains the failure.
+            let (result, _) =
+                read_scripted([unopenable(), script([1, 0xFF, 2, 3].map(silent_probe))]);
+            assert!(matches!(
+                result,
+                Err(HidppError::Hid(HidError::InitializationError))
+            ));
         }
     }
 
     mod request_timing {
         use super::*;
 
-        fn silent_probe(device_index: u8) -> Vec<ScriptStep> {
-            exchange(&unified_lookup(device_index), [no_reply()])
-        }
-
         #[test]
         fn continuous_queued_reports_stop_flushing_at_the_window_boundary() {
             for last_read_ms in [1, 2] {
                 let stale = [REPORT_ID_SHORT, 1, 5, 0x1F, 8, 0, 0, 0];
-                let io = ScriptedIo::new([[
-                    ScriptStep::flush(&stale).after(ms(100)),
-                    ScriptStep::flush(&stale).after(ms(99)),
-                    ScriptStep::flush(&stale).after(ms(last_read_ms)),
-                    ScriptStep::write(&UNIFIED_QUERY),
-                    reply(&[REPORT_ID_SHORT, 1, 5, 0x1F, 78, 0, 0, 1]),
-                ]]);
+                let (result, elapsed) = read_one([
+                    found_unified(),
+                    vec![
+                        ScriptStep::flush(&stale).after(ms(100)),
+                        ScriptStep::flush(&stale).after(ms(99)),
+                        ScriptStep::flush(&stale).after(ms(last_read_ms)),
+                        ScriptStep::write(&UNIFIED_QUERY),
+                        reply(&[REPORT_ID_SHORT, 1, 5, 0x1F, 78, 0, 0, 1]),
+                    ],
+                ]);
 
-                assert_eq!(
-                    at(&io, 1).read_battery(BatteryFeature::Unified(5)).unwrap(),
-                    Some(BatteryStatus {
-                        level: 78,
-                        charging: true,
-                    })
-                );
-                assert_eq!(io.elapsed(), ms(199 + last_read_ms));
+                assert_eq!(result.unwrap(), status(78, true));
+                assert_eq!(elapsed, ms(199 + last_read_ms));
             }
         }
 
         #[test]
         fn unrelated_reports_consume_the_original_response_wait() {
-            let io = ScriptedIo::new([exchange(
-                &UNIFIED_LOOKUP,
-                [
-                    ScriptStep::read(1_500, &[REPORT_ID_SHORT, 2, 0, 0x0F, 5, 0, 0]).after(ms(500)),
-                    ScriptStep::read(1_000, &[REPORT_ID_SHORT, 1, 0, 0x0E, 5, 0, 0]).after(ms(750)),
-                    ScriptStep::silence(250, ms(250)),
-                ],
-            )]);
+            let (result, elapsed) = read_one(
+                iter::once(exchange(
+                    &UNIFIED_LOOKUP,
+                    [
+                        ScriptStep::read(1_500, &[REPORT_ID_SHORT, 2, 0, 0x0F, 5, 0, 0])
+                            .after(ms(500)),
+                        ScriptStep::read(1_000, &[REPORT_ID_SHORT, 1, 0, 0x0E, 5, 0, 0])
+                            .after(ms(750)),
+                        ScriptStep::silence(250, ms(250)),
+                    ],
+                ))
+                .chain(
+                    DEVICE_INDEX_CANDIDATES[1..]
+                        .iter()
+                        .copied()
+                        .map(offline_probe),
+                ),
+            );
 
-            let result = at(&io, 1).lookup_feature(FEATURE_UNIFIED_BATTERY, RESPONSE_TIMEOUT);
-
-            assert!(matches!(result, Ok(FeatureLookup::Silent)));
-            assert_eq!(io.elapsed(), RESPONSE_TIMEOUT);
+            assert!(matches!(result, Ok(Reading::Offline)));
+            assert_eq!(elapsed, RESPONSE_TIMEOUT);
         }
 
         #[test]
         fn fractional_milliseconds_are_truncated_without_ending_the_wait_early() {
             let unrelated = [REPORT_ID_SHORT, 2, 0, 0x0F, 5, 0, 0];
-            let io = ScriptedIo::new([exchange(
-                &UNIFIED_LOOKUP,
-                [
-                    ScriptStep::read(2, &unrelated).after(Duration::from_micros(1_750)),
-                    ScriptStep::read(0, &unrelated).after(Duration::from_micros(500)),
-                    ScriptStep::silence(0, Duration::from_micros(250)),
-                ],
-            )]);
+            let remaining = Duration::from_micros(2_500);
+            let (result, elapsed) = read_one([
+                // The receiver answers so late that only 2.5 ms of the budget remain.
+                exchange(
+                    &UNIFIED_LOOKUP,
+                    [reply(&RECEIVER_OFFLINE).after(DISCOVERY_BUDGET - remaining)],
+                ),
+                exchange(
+                    &unified_lookup(0xFF),
+                    [
+                        ScriptStep::read(2, &unrelated).after(Duration::from_micros(1_750)),
+                        ScriptStep::read(0, &unrelated).after(Duration::from_micros(500)),
+                        ScriptStep::silence(0, Duration::from_micros(250)),
+                    ],
+                ),
+            ]);
 
-            let result =
-                at(&io, 1).lookup_feature(FEATURE_UNIFIED_BATTERY, Duration::from_micros(2_500));
-
-            assert!(matches!(result, Ok(FeatureLookup::Silent)));
-            assert_eq!(io.elapsed(), Duration::from_micros(2_500));
+            assert!(matches!(result, Ok(Reading::Offline)));
+            assert_eq!(elapsed, DISCOVERY_BUDGET);
         }
 
         #[test]
-        fn zero_duration_ignores_an_unrelated_report_and_returns_silence() {
-            let io = ScriptedIo::new([exchange(
-                &UNIFIED_LOOKUP,
-                [ScriptStep::read(0, &[REPORT_ID_SHORT, 2, 0, 0x0F, 5, 0, 0])],
-            )]);
+        fn a_lookup_with_no_budget_left_ignores_an_unrelated_report() {
+            let (result, _) = read_one([
+                exchange(
+                    &UNIFIED_LOOKUP,
+                    [reply(&[REPORT_ID_SHORT, 1, 0, 0x0F, 0, 0, 0]).after(DISCOVERY_BUDGET)],
+                ),
+                exchange(
+                    &LEGACY_LOOKUP,
+                    [ScriptStep::read(0, &[REPORT_ID_SHORT, 2, 0, 0x0F, 5, 0, 0])],
+                ),
+            ]);
 
-            let result = at(&io, 1).lookup_feature(FEATURE_UNIFIED_BATTERY, Duration::ZERO);
-
-            assert!(matches!(result, Ok(FeatureLookup::Silent)));
+            assert!(matches!(result, Ok(Reading::NotFound)));
         }
 
         #[test]
         fn discovery_overhead_preserves_the_wait_and_later_battery_request_durations() {
-            let io = ScriptedIo::new([
-                vec![
-                    ScriptStep::flush(&[REPORT_ID_SHORT, 1, 0, 0x0F, 99, 0, 0]).after(ms(150)),
-                    ScriptStep::flush(&[]),
-                    ScriptStep::write(&UNIFIED_LOOKUP).after(ms(100)),
-                    ScriptStep::read(400, &UNIFIED_FEATURE).after(ms(400)),
-                ],
-                exchange(&UNIFIED_QUERY, [no_reply()]),
-                exchange(&LEGACY_LOOKUP, [reply(&LEGACY_FEATURE).after(ms(1_500))]),
-                exchange(&LEGACY_QUERY, [reply(&LEGACY_STATUS).after(ms(1_500))]),
+            let (result, elapsed) = read_scripted([
+                // Only 400 ms of the budget remain when the next HID interface
+                // is probed.
+                script([exchange(
+                    &UNIFIED_LOOKUP,
+                    [reply(&RECEIVER_OFFLINE).after(ms(5_600))],
+                )]),
+                script([
+                    vec![
+                        ScriptStep::flush(&[REPORT_ID_SHORT, 1, 0, 0x0F, 99, 0, 0]).after(ms(150)),
+                        ScriptStep::flush(&[]),
+                        ScriptStep::write(&UNIFIED_LOOKUP).after(ms(100)),
+                        ScriptStep::read(400, &UNIFIED_FEATURE).after(ms(400)),
+                    ],
+                    exchange(&UNIFIED_QUERY, [no_reply()]),
+                    exchange(&LEGACY_LOOKUP, [reply(&LEGACY_FEATURE).after(ms(1_500))]),
+                    exchange(&LEGACY_QUERY, [reply(&LEGACY_STATUS).after(ms(1_500))]),
+                ]),
             ]);
-            // Only 400 ms remain for discovery when this candidate starts.
-            let deadline = io.now() + ms(400);
 
-            let Ok(Discovery::Found(battery_feature)) = discover_single(&io, deadline) else {
-                panic!("a matching reply at the response deadline should be accepted");
-            };
-            assert_eq!(battery_feature, BatteryFeature::Unified(5));
-            assert_eq!(io.elapsed(), ms(650));
-
-            assert_eq!(
-                at(&io, 1).read_battery(battery_feature).unwrap(),
-                Some(LEGACY_LEVEL)
-            );
-            assert_eq!(io.elapsed(), ms(5_150));
+            // A matching reply at the response deadline is accepted, and the
+            // battery requests after it still get their full timeouts.
+            assert_eq!(result.unwrap(), LEGACY_READING);
+            assert_eq!(elapsed, ms(5_600 + 650 + 3 * 1_500));
         }
 
         #[test]
-        fn discovery_stops_before_the_next_candidate_after_six_seconds_of_silence() {
-            let io = ScriptedIo::new([1, 0xFF, 2, 3].map(silent_probe));
+        fn silence_skips_the_legacy_lookup_and_the_budget_ends_discovery() {
+            let (result, elapsed) = read_one([
+                exchange(
+                    &UNIFIED_LOOKUP,
+                    [reply(&[REPORT_ID_SHORT, 2, 0, 0x0F, 5, 0, 0]), no_reply()],
+                ),
+                silent_probe(0xFF),
+                silent_probe(2),
+                silent_probe(3),
+            ]);
 
-            let result = discover_single(&io, io.now() + DISCOVERY_BUDGET);
-
-            assert!(matches!(result, Ok(Discovery::NotFound)));
-            assert_eq!(io.elapsed(), DISCOVERY_BUDGET);
+            assert!(matches!(result, Ok(Reading::NotFound)));
+            assert_eq!(elapsed, DISCOVERY_BUDGET);
         }
 
         #[test]
         fn a_probe_can_finish_its_legacy_lookup_after_the_discovery_budget_is_used() {
-            let io = ScriptedIo::new([
+            let (result, elapsed) = read_one([
                 silent_probe(1),
                 silent_probe(0xFF),
                 silent_probe(2),
@@ -1154,23 +1135,25 @@ mod tests {
                     &[REPORT_ID_SHORT, 3, 0, 0x0F, 0x10, 0x00, 0],
                     [ScriptStep::read(0, &[REPORT_ID_SHORT, 3, 0, 0x0F, 6, 0, 0])],
                 ),
+                exchange(
+                    &[REPORT_ID_SHORT, 3, 6, 0x0F, 0, 0, 0],
+                    [reply(&[REPORT_ID_SHORT, 3, 6, 0x0F, 42, 0, 0x81])],
+                ),
             ]);
 
-            let result = discover_single(&io, io.now() + DISCOVERY_BUDGET);
-
-            assert!(matches!(
-                result,
-                Ok(Discovery::Found(BatteryFeature::Legacy(6)))
-            ));
-            assert_eq!(io.elapsed(), DISCOVERY_BUDGET);
+            assert_eq!(result.unwrap(), LEGACY_READING);
+            assert_eq!(elapsed, DISCOVERY_BUDGET);
         }
     }
 
     mod battery_recovery {
         use super::*;
 
-        fn read_unified(io: &ScriptedIo) -> Result<Option<BatteryStatus>, HidppError> {
-            at(io, 1).read_battery(BatteryFeature::Unified(5))
+        /// Find the unified feature on device index 1, then read it with `parts`.
+        fn read_unified(
+            parts: impl IntoIterator<Item = Vec<ScriptStep>>,
+        ) -> Result<Reading, HidppError> {
+            read_one(iter::once(found_unified()).chain(parts)).0
         }
 
         /// Look up the legacy feature, then read its status with `status_reply`.
@@ -1184,12 +1167,12 @@ mod tests {
         fn incomplete_unified_replies_recover_with_a_legacy_status() {
             // Every matching prefix still lacks the unified charging byte.
             for length in 4..=INCOMPLETE_UNIFIED.len() {
-                let io = ScriptedIo::new([
+                let result = read_unified([
                     exchange(&UNIFIED_QUERY, [reply(&INCOMPLETE_UNIFIED[..length])]),
                     legacy_fallback(reply(&LEGACY_STATUS)),
                 ]);
 
-                assert_eq!(read_unified(&io).unwrap(), Some(LEGACY_LEVEL));
+                assert_eq!(result.unwrap(), LEGACY_READING);
             }
         }
 
@@ -1200,18 +1183,18 @@ mod tests {
                 reply(&[REPORT_ID_LONG, 1, ERROR_MARKER_HIDPP20, 5, 0x1F, 0x02]),
                 no_reply(),
             ] {
-                let io = ScriptedIo::new([
+                let result = read_unified([
                     exchange(&UNIFIED_QUERY, [unified_reply]),
                     legacy_fallback(reply(&LEGACY_STATUS)),
                 ]);
 
-                assert_eq!(read_unified(&io).unwrap(), Some(LEGACY_LEVEL));
+                assert_eq!(result.unwrap(), LEGACY_READING);
             }
         }
 
         #[test]
         fn missing_results_from_both_features_return_no_battery_status() {
-            let io = ScriptedIo::new([
+            let result = read_unified([
                 exchange(&UNIFIED_QUERY, [no_reply()]),
                 legacy_fallback(reply(&[
                     REPORT_ID_SHORT,
@@ -1224,7 +1207,7 @@ mod tests {
                 ])),
             ]);
 
-            assert_eq!(read_unified(&io).unwrap(), None);
+            assert_eq!(result.unwrap(), Reading::NoStatus);
         }
 
         #[test]
@@ -1236,12 +1219,12 @@ mod tests {
                 reply(&[REPORT_ID_SHORT, 1, 0, 0x0F]),
                 no_reply(),
             ] {
-                let io = ScriptedIo::new([
+                let result = read_unified([
                     exchange(&UNIFIED_QUERY, [reply(&INCOMPLETE_UNIFIED)]),
                     exchange(&LEGACY_LOOKUP, [lookup_reply]),
                 ]);
 
-                assert_short_response(read_unified(&io), 8, 7);
+                assert_short_response(result, 8, 7);
             }
         }
 
@@ -1253,23 +1236,23 @@ mod tests {
                 reply(&[REPORT_ID_LONG, 1, ERROR_MARKER_HIDPP20, 6, 0x0F, 0x02]),
                 no_reply(),
             ] {
-                let io = ScriptedIo::new([
+                let result = read_unified([
                     exchange(&UNIFIED_QUERY, [reply(&INCOMPLETE_UNIFIED)]),
                     legacy_fallback(status_reply),
                 ]);
 
-                assert_short_response(read_unified(&io), 8, 7);
+                assert_short_response(result, 8, 7);
             }
         }
 
         #[test]
         fn a_missing_unified_result_does_not_hide_a_legacy_short_response() {
-            let io = ScriptedIo::new([
+            let result = read_unified([
                 exchange(&UNIFIED_QUERY, [no_reply()]),
                 legacy_fallback(reply(&[REPORT_ID_SHORT, 1, 6, 0x0F, 42, 0])),
             ]);
 
-            assert_short_response(read_unified(&io), 7, 6);
+            assert_short_response(result, 7, 6);
         }
 
         #[derive(Debug, Clone, Copy)]
@@ -1311,7 +1294,7 @@ mod tests {
                 }
             }
 
-            fn assert_error(self, result: Result<Option<BatteryStatus>, HidppError>) {
+            fn assert_error(self, result: Result<Reading, HidppError>) {
                 match (self, result) {
                     (
                         Self::ShortWrite,
@@ -1329,30 +1312,28 @@ mod tests {
             }
         }
 
+        // The scripts end at the failure, so these also check that a failed
+        // read ends discovery instead of probing the next device index.
         #[test]
         fn unified_io_failures_stop_without_legacy_recovery() {
             for failure in IoFailure::ALL {
-                let io = ScriptedIo::new([failure.steps(&UNIFIED_QUERY)]);
-
-                failure.assert_error(read_unified(&io));
+                failure.assert_error(read_unified([failure.steps(&UNIFIED_QUERY)]));
             }
         }
 
         #[test]
         fn legacy_io_failures_replace_the_unified_short_response() {
             for failure in IoFailure::ALL {
-                let lookup_failure = ScriptedIo::new([
+                failure.assert_error(read_unified([
                     exchange(&UNIFIED_QUERY, [reply(&INCOMPLETE_UNIFIED)]),
                     failure.steps(&LEGACY_LOOKUP),
-                ]);
-                failure.assert_error(read_unified(&lookup_failure));
+                ]));
 
-                let query_failure = ScriptedIo::new([
+                failure.assert_error(read_unified([
                     exchange(&UNIFIED_QUERY, [reply(&INCOMPLETE_UNIFIED)]),
                     exchange(&LEGACY_LOOKUP, [reply(&LEGACY_FEATURE)]),
                     failure.steps(&LEGACY_QUERY),
-                ]);
-                failure.assert_error(read_unified(&query_failure));
+                ]));
             }
         }
     }

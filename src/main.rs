@@ -3,7 +3,7 @@ mod hidpp;
 use std::process::ExitCode;
 
 use hidapi::HidApi;
-use hidpp::{open_first_working_transport, read_battery, BatteryStatus, Discovery};
+use hidpp::{read_battery, BatteryStatus, Reading};
 
 fn main() -> ExitCode {
     if std::env::args().nth(1).as_deref() == Some("--version") {
@@ -26,27 +26,23 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let api = HidApi::new().map_err(|error| format!("Could not initialize HID access: {error}"))?;
-    let transport = found_transport(
-        open_first_working_transport(&api)
-            .map_err(|error| format!("Could not probe Logitech HID++ interface: {error}"))?,
-    )?;
-    let status = read_battery(&transport)
-        .map_err(|error| format!("Could not read battery level: {error}"))?
-        .ok_or_else(|| {
-            String::from("Could not read battery level. Wake the mouse up and retry.")
-        })?;
+    let reading =
+        read_battery(&api).map_err(|error| format!("Could not read battery level: {error}"))?;
 
-    println!("{}", format_status(status));
+    println!("{}", format_status(battery_status(reading)?));
     Ok(())
 }
 
-fn found_transport<T>(discovery: Discovery<T>) -> Result<T, String> {
-    match discovery {
-        Discovery::Found(transport) => Ok(transport),
-        Discovery::Offline => Err(String::from(
+fn battery_status(reading: Reading) -> Result<BatteryStatus, String> {
+    match reading {
+        Reading::Status(status) => Ok(status),
+        Reading::NoStatus => Err(String::from(
+            "Could not read battery level. Wake the mouse up and retry.",
+        )),
+        Reading::Offline => Err(String::from(
             "The receiver reports no connected mouse. Turn the mouse on or wake it, and retry.",
         )),
-        Discovery::NotFound => Err(String::from(
+        Reading::NotFound => Err(String::from(
             "No responsive Logitech HID++ interface found. Connect the GPW2 through its LIGHTSPEED receiver or USB, wake it, and retry.",
         )),
     }
