@@ -79,12 +79,23 @@ impl From<HidError> for HidppError {
     }
 }
 
+/// One report read from a HID interface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Report {
+    buffer: [u8; REPORT_BUFFER_LEN],
+    length: usize,
+}
+
+impl Report {
+    fn bytes(&self) -> &[u8] {
+        &self.buffer[..self.length]
+    }
+}
+
 /// What a single HID++ request produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Reply {
-    Response {
-        buffer: [u8; REPORT_BUFFER_LEN],
-        length: usize,
-    },
+    Response(Report),
     /// The device index exists but rejected the request.
     DeviceError,
     /// The receiver has no connected device at this index.
@@ -212,49 +223,40 @@ fn send_short(device: &impl RequestIo, report: [u8; 7]) -> Result<(), HidppError
     Ok(())
 }
 
-/// How a received report relates to the request awaiting a reply.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReportMatch {
-    Reply,
-    /// The receiver has no connected device at the requested index.
-    Offline,
-    /// The device rejected the request.
-    DeviceError,
-    Unrelated,
-}
-
-/// A HID++ 2.0 reply echoes the request's function and software ID, so matching
-/// that byte too rejects stale reports and replies meant for another reader.
-/// An error arrives as an ordinary short or long report whose third byte is
-/// the error marker, followed by the request's feature index, function byte,
-/// and the error code.
+/// The reply `report` gives to the request, or `None` if it answers something
+/// else. A HID++ 2.0 reply echoes the request's function and software ID, so
+/// matching that byte too rejects stale reports and replies meant for another
+/// reader. An error arrives as an ordinary short or long report whose third
+/// byte is the error marker, followed by the request's feature index, function
+/// byte, and the error code.
 fn match_report(
-    report: &[u8],
+    report: Report,
     device_index: u8,
     feature_index: u8,
     function_byte: u8,
-) -> ReportMatch {
+) -> Option<Reply> {
+    let bytes = report.bytes();
     let header_matches = matches!(
-        report.first(),
+        bytes.first(),
         Some(&REPORT_ID_SHORT) | Some(&REPORT_ID_LONG)
-    ) && report.get(1) == Some(&device_index);
+    ) && bytes.get(1) == Some(&device_index);
     if !header_matches {
-        return ReportMatch::Unrelated;
+        return None;
     }
-    match report[2..] {
+    match bytes[2..] {
         [feature, function, ..] if feature == feature_index && function == function_byte => {
-            ReportMatch::Reply
+            Some(Reply::Response(report))
         }
         [marker @ (ERROR_MARKER_HIDPP10 | ERROR_MARKER_HIDPP20), feature, function, code, ..]
             if feature == feature_index && function == function_byte =>
         {
             if marker == ERROR_MARKER_HIDPP10 && code == ERROR_CODE_UNKNOWN_DEVICE {
-                ReportMatch::Offline
+                Some(Reply::Offline)
             } else {
-                ReportMatch::DeviceError
+                Some(Reply::DeviceError)
             }
         }
-        _ => ReportMatch::Unrelated,
+        _ => None,
     }
 }
 
@@ -266,23 +268,16 @@ fn read_response(
     timeout: Duration,
 ) -> Result<Reply, HidppError> {
     let deadline = device.now() + timeout;
-    let mut buffer = [0_u8; REPORT_BUFFER_LEN];
     loop {
         let remaining = deadline.saturating_duration_since(device.now());
         let timeout_ms = remaining.as_millis().min(i32::MAX as u128) as i32;
-        let length = device.read_timeout(&mut buffer, timeout_ms)?;
-        if length > 0 {
-            match match_report(
-                &buffer[..length],
-                device_index,
-                feature_index,
-                function_byte,
-            ) {
-                ReportMatch::Reply => return Ok(Reply::Response { buffer, length }),
-                ReportMatch::Offline => return Ok(Reply::Offline),
-                ReportMatch::DeviceError => return Ok(Reply::DeviceError),
-                ReportMatch::Unrelated => {}
-            }
+        let mut report = Report {
+            buffer: [0; REPORT_BUFFER_LEN],
+            length: 0,
+        };
+        report.length = device.read_timeout(&mut report.buffer, timeout_ms)?;
+        if let Some(reply) = match_report(report, device_index, feature_index, function_byte) {
+            return Ok(reply);
         }
         if device.now() >= deadline {
             return Ok(Reply::Silence);
@@ -332,7 +327,7 @@ fn lookup_feature(
         timeout,
     )?;
     Ok(match reply {
-        Reply::Response { buffer, length } => match parse_feature_index(&buffer[..length])? {
+        Reply::Response(report) => match parse_feature_index(report.bytes())? {
             Some(feature_index) => FeatureLookup::Index(feature_index),
             None => FeatureLookup::Unsupported,
         },
@@ -362,9 +357,7 @@ fn query_feature(
         RESPONSE_TIMEOUT,
     )?;
     match reply {
-        Reply::Response { buffer, length } => {
-            Ok(Some(parse_battery(&buffer[..length], charging_offset)?))
-        }
+        Reply::Response(report) => Ok(Some(parse_battery(report.bytes(), charging_offset)?)),
         Reply::DeviceError | Reply::Offline | Reply::Silence => Ok(None),
     }
 }
@@ -596,6 +589,15 @@ mod tests {
         [REPORT_ID_SHORT, device_index, 0, 0x0F, 0x10, 0x04, 0]
     }
 
+    fn report(bytes: &[u8]) -> Report {
+        let mut buffer = [0; REPORT_BUFFER_LEN];
+        buffer[..bytes.len()].copy_from_slice(bytes);
+        Report {
+            buffer,
+            length: bytes.len(),
+        }
+    }
+
     fn ms(millis: u64) -> Duration {
         Duration::from_millis(millis)
     }
@@ -785,62 +787,40 @@ mod tests {
     #[test]
     fn classifies_reports_against_the_request() {
         // The request goes to device index 1, feature 5, function 1, software ID 0x0F.
-        let cases: [(&[u8], ReportMatch); 14] = [
-            (&[REPORT_ID_SHORT, 1, 5, 0x1F, 78, 0, 0], ReportMatch::Reply),
-            (
-                &[REPORT_ID_LONG, 1, 5, 0x1F, 78, 0, 0, 1],
-                ReportMatch::Reply,
-            ),
-            (&[0x12, 1, 5, 0x1F, 78, 0, 0], ReportMatch::Unrelated),
-            (
-                &[REPORT_ID_SHORT, 2, 5, 0x1F, 78, 0, 0],
-                ReportMatch::Unrelated,
-            ),
-            (
-                &[REPORT_ID_SHORT, 1, 6, 0x1F, 78, 0, 0],
-                ReportMatch::Unrelated,
-            ),
-            (
-                &[REPORT_ID_SHORT, 1, 5, 0x0F, 78, 0, 0],
-                ReportMatch::Unrelated,
-            ),
-            (
-                &[REPORT_ID_SHORT, 1, 5, 0x1E, 78, 0, 0],
-                ReportMatch::Unrelated,
-            ),
-            (&[REPORT_ID_SHORT, 1], ReportMatch::Unrelated),
+        let short_reply = [REPORT_ID_SHORT, 1, 5, 0x1F, 78, 0, 0];
+        let long_reply = [REPORT_ID_LONG, 1, 5, 0x1F, 78, 0, 0, 1];
+        let cases: [(&[u8], Option<Reply>); 14] = [
+            (&short_reply, Some(Reply::Response(report(&short_reply)))),
+            (&long_reply, Some(Reply::Response(report(&long_reply)))),
+            (&[0x12, 1, 5, 0x1F, 78, 0, 0], None),
+            (&[REPORT_ID_SHORT, 2, 5, 0x1F, 78, 0, 0], None),
+            (&[REPORT_ID_SHORT, 1, 6, 0x1F, 78, 0, 0], None),
+            (&[REPORT_ID_SHORT, 1, 5, 0x0F, 78, 0, 0], None),
+            (&[REPORT_ID_SHORT, 1, 5, 0x1E, 78, 0, 0], None),
+            (&[REPORT_ID_SHORT, 1], None),
             (
                 &[REPORT_ID_SHORT, 1, 0x8F, 5, 0x1F, 0x08, 0],
-                ReportMatch::Offline,
+                Some(Reply::Offline),
             ),
             (
                 &[REPORT_ID_SHORT, 1, 0x8F, 5, 0x1F, 0x02, 0],
-                ReportMatch::DeviceError,
+                Some(Reply::DeviceError),
             ),
             // Only the receiver's HID++ 1.0 error means no connected device.
             (
                 &[REPORT_ID_LONG, 1, 0xFF, 5, 0x1F, 0x08, 0],
-                ReportMatch::DeviceError,
+                Some(Reply::DeviceError),
             ),
             // Errors must echo the request too.
-            (
-                &[REPORT_ID_SHORT, 1, 0x8F, 6, 0x1F, 0x08, 0],
-                ReportMatch::Unrelated,
-            ),
-            (
-                &[REPORT_ID_SHORT, 1, 0xFF, 5, 0x0F, 0x02, 0],
-                ReportMatch::Unrelated,
-            ),
-            (
-                &[REPORT_ID_SHORT, 1, 0x8E, 5, 0x1F, 0x02, 0],
-                ReportMatch::Unrelated,
-            ),
+            (&[REPORT_ID_SHORT, 1, 0x8F, 6, 0x1F, 0x08, 0], None),
+            (&[REPORT_ID_SHORT, 1, 0xFF, 5, 0x0F, 0x02, 0], None),
+            (&[REPORT_ID_SHORT, 1, 0x8E, 5, 0x1F, 0x02, 0], None),
         ];
-        for (report, expected) in cases {
+        for (bytes, expected) in cases {
             assert_eq!(
-                match_report(report, 1, 5, 0x1F),
+                match_report(report(bytes), 1, 5, 0x1F),
                 expected,
-                "report {report:02X?}"
+                "report {bytes:02X?}"
             );
         }
     }
