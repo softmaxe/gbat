@@ -116,7 +116,7 @@ cp target/release/gbat "$HOME/.local/bin/gbat"
 | `No responsive Logitech HID++ interface found` | 连接接收器或 USB 线，唤醒鼠标后重试。 |
 | `The receiver reports no connected mouse` | 鼠标已离线。打开鼠标电源或移动鼠标后重试。 |
 | `Could not read battery level` | 鼠标可能在读取时离线，或返回了无法使用的电池响应。移动鼠标后重试。 |
-| `Could not initialize HID access` 或访问错误 | 从 Terminal 运行一次 `gbat`，并允许 macOS 弹出的权限请求。通常不需要 `sudo`。 |
+| `Could not initialize HID access` 或 `Could not read battery level: HID access failed` | 从 Terminal 运行一次 `gbat`，并允许 macOS 弹出的权限请求。通常不需要 `sudo`。 |
 | Raycast 提示 `gbat binary not found` | 安装或构建 `gbat`，或在脚本中将 `GBAT_BINARY` 设为它的可执行文件路径。 |
 | `Battery: 100%` 但没有 `(charging)` | 鼠标充满后可能停止主动充电，这是正常现象。 |
 | macOS 阻止运行 | 打开 System Settings > Privacy & Security，为 `gbat` 选择 Open Anyway。 |
@@ -129,9 +129,9 @@ xattr -dr com.apple.quarantine "$(brew --prefix gbat)"
 
 ## 工作原理
 
-`gbat` 以共享模式打开 Logitech HID++ 接口。它会检查接收器的设备索引 `1` 到 `6` 和 USB 直连索引 `0xFF`，先尝试 `1` 和 `0xFF`，再使用首个报告支持电池功能的接口及设备索引。连接多只鼠标时，无法指定要读取哪一只。
+`gbat` 以共享模式打开 Logitech HID++ 接口。它会检查接收器的设备索引 `1` 到 `6` 和 USB 直连索引 `0xFF`，先尝试 `1` 和 `0xFF`，再使用首个报告支持电池功能的接口及设备索引。它只按 Logitech 厂商 ID 筛选，连接多个 Logitech HID++ 设备时，可能读到另一只鼠标、键盘或耳机，且无法指定设备。
 
-它优先读取 `0x1004` 的 `UNIFIED_BATTERY`。该功能不可用、未响应或返回不完整响应时，会回退到 `0x1000` 的 `BATTERY_STATUS`。HID 访问错误和写入不完整会直接终止读取。如果两个功能都未返回电池状态，命令会报错，不会将读取失败显示为 `0%`。
+它优先读取 `0x1004` 的 `UNIFIED_BATTERY`。该功能不可用、未响应或返回不完整响应时，会回退到 `0x1000` 的 `BATTERY_STATUS`。找到电池功能后，HID 访问错误和写入不完整会直接终止读取。探测阶段某个接口出错时会跳过它，只有其他接口都没找到鼠标、也没有报告离线时，才返回该错误。如果两个功能都未返回电池状态，命令会报错，不会将读取失败显示为 `0%`。
 
 ## 许可证
 

@@ -140,7 +140,7 @@ Make sure `$HOME/.local/bin` is on `PATH` to run `gbat` from any directory.
 | `No responsive Logitech HID++ interface found` | Connect the receiver or USB cable, wake the mouse, and retry. |
 | `The receiver reports no connected mouse` | The mouse is offline. Turn it on or move it, and retry. |
 | `Could not read battery level` | The mouse may have gone offline during the read, or its battery response could not be used. Move it and retry. |
-| `Could not initialize HID access` or an access error | Run `gbat` once from Terminal and approve any macOS permission prompt. `sudo` is not normally required. |
+| `Could not initialize HID access` or `Could not read battery level: HID access failed` | Run `gbat` once from Terminal and approve any macOS permission prompt. `sudo` is not normally required. |
 | `gbat binary not found` in Raycast | Install or build `gbat`, or set `GBAT_BINARY` in the script to its executable path. |
 | `Battery: 100%` without `(charging)` | A full mouse may stop active charging. This is expected. |
 | macOS blocks the binary | Open System Settings > Privacy & Security and choose Open Anyway for `gbat`. |
@@ -157,11 +157,16 @@ xattr -dr com.apple.quarantine "$(brew --prefix gbat)"
 `gbat` opens Logitech HID++ interfaces in shared mode. It checks receiver device
 indices `1` through `6` and the direct USB index `0xFF`, trying `1` and `0xFF`
 first. It uses the first interface and device index that reports a supported
-battery feature. There is no device selector for setups with multiple mice.
+battery feature. It filters only by Logitech's vendor ID, so with several
+Logitech HID++ devices connected it may read another mouse, keyboard, or
+headset. There is no device selector.
 
 It reads `UNIFIED_BATTERY` at `0x1004` and falls back to `BATTERY_STATUS` at
 `0x1000` when the unified feature is unavailable, does not answer, or returns an
-incomplete response. HID access errors and incomplete writes stop the read.
+incomplete response. Once a battery feature is found, HID access errors and
+incomplete writes stop the read. During discovery, an interface that fails is
+skipped; its error is reported only if no other interface finds the mouse or
+reports it offline.
 If neither feature yields a battery status, the command reports an error
 instead of inventing a `0%` reading.
 
