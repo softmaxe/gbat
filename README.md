@@ -163,10 +163,9 @@ headset. There is no device selector.
 
 It reads `UNIFIED_BATTERY` at `0x1004` and falls back to `BATTERY_STATUS` at
 `0x1000` when the unified feature is unavailable, does not answer, or returns an
-incomplete response. Once a battery feature is found, HID access errors and
-incomplete writes stop the read. During discovery, an interface that fails is
-skipped; its error is reported only if no other interface finds the mouse or
-reports it offline.
+incomplete response. Once a battery feature is found, HID access errors stop the
+read. During discovery, an interface that fails is skipped; its error is
+reported only if no other interface finds the mouse or reports it offline.
 If neither feature yields a battery status, the command reports an error
 instead of inventing a `0%` reading.
 
