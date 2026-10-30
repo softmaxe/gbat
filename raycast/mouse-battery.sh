@@ -14,10 +14,6 @@ project_dir="${script_dir:h}"
 
 if [[ -n "${GBAT_BINARY:-}" ]]; then
   binary_path="$GBAT_BINARY"
-elif [[ -n "${GPWBAT_BINARY:-}" ]]; then
-  binary_path="$GPWBAT_BINARY"
-elif [[ -n "${GPW2_BATTERY_BINARY:-}" ]]; then
-  binary_path="$GPW2_BATTERY_BINARY"
 elif binary_path="$(command -v gbat 2>/dev/null)" && [[ -x "$binary_path" ]]; then
   :
 else
@@ -26,8 +22,7 @@ else
     "/opt/homebrew/bin/gbat" \
     "/usr/local/bin/gbat" \
     "$HOME/.local/bin/gbat" \
-    "$project_dir/target/release/gbat" \
-    "$project_dir/gbat"; do
+    "$project_dir/target/release/gbat"; do
     if [[ -x "$candidate" ]]; then
       binary_path="$candidate"
       break

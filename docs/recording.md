@@ -30,15 +30,13 @@ The script builds with `--locked`, verifies a real battery read, and records
 sets `GBAT_BINARY` to that same build, so all four commands use it. There is no
 sample-output wrapper.
 
-The recorder exports PNG frames with VHS, encodes them with FFmpeg, and checks
-that the GIF can be decoded before replacing `assets/demo.gif`. Temporary files
-are removed on exit. This avoids a VHS `0.12.0` issue where the recording context
-is cancelled before rendering, leaving the existing GIF untouched despite a
-successful exit. See the upstream [render call](https://github.com/charmbracelet/vhs/blob/v0.12.0/evaluator.go#L187).
+The recorder renders to a temporary GIF and checks that FFmpeg can decode it
+before replacing `assets/demo.gif`. Temporary files are removed on exit.
+
+Use VHS `0.12.1` or later: `0.12.0` can exit successfully without rendering,
+which leaves the existing GIF untouched.
 
 The checked-in capture used VHS `0.12.1`, ttyd `1.7.7`, and FFmpeg `9.0.2`.
-If you change the tape's dimensions, frame rate, padding, theme, or window bar,
-update the matching FFmpeg settings in [`record-demo.sh`](record-demo.sh).
 
 ## Preserve the original Raycast animation
 

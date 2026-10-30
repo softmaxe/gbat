@@ -77,7 +77,7 @@ gbat
   <img src="assets/raycast-demo.webp" alt="gbat Raycast Script Command 演示" width="700">
 </p>
 
-脚本依次检查 `PATH`、`/opt/homebrew/bin`、`/usr/local/bin`、`$HOME/.local/bin`，以及仓库的 `target/release` 目录和根目录。
+脚本依次检查 `PATH`、`/opt/homebrew/bin`、`/usr/local/bin`、`$HOME/.local/bin`，以及仓库的 `target/release` 目录。
 
 如果可执行文件位于其他位置，在 `mouse-battery.sh` 的 `set -euo pipefail` 之前加入：
 
@@ -87,7 +87,7 @@ export GBAT_BINARY="/path/to/gbat"
 
 在 Terminal 中设置这个变量，只会影响从该 Shell 启动的脚本。
 
-指定路径的优先级高于上述搜索。脚本依次检查 `GBAT_BINARY`、旧变量 `GPWBAT_BINARY` 和 `GPW2_BATTERY_BINARY`，使用第一个非空值。该路径必须指向可执行文件。
+`GBAT_BINARY` 的优先级高于上述搜索，且必须指向可执行文件。
 
 ## 从源码构建
 
@@ -131,7 +131,7 @@ xattr -dr com.apple.quarantine "$(brew --prefix gbat)"
 
 `gbat` 以共享模式打开 Logitech HID++ 接口。它会检查接收器的设备索引 `1` 到 `6` 和 USB 直连索引 `0xFF`，先尝试 `1` 和 `0xFF`，再使用首个报告支持电池功能的接口及设备索引。它只按 Logitech 厂商 ID 筛选，连接多个 Logitech HID++ 设备时，可能读到另一只鼠标、键盘或耳机，且无法指定设备。
 
-它优先读取 `0x1004` 的 `UNIFIED_BATTERY`。该功能不可用、未响应或返回不完整响应时，会回退到 `0x1000` 的 `BATTERY_STATUS`。找到电池功能后，HID 访问错误和写入不完整会直接终止读取。探测阶段某个接口出错时会跳过它，只有其他接口都没找到鼠标、也没有报告离线时，才返回该错误。如果两个功能都未返回电池状态，命令会报错，不会将读取失败显示为 `0%`。
+它优先读取 `0x1004` 的 `UNIFIED_BATTERY`。该功能不可用、未响应或返回不完整响应时，会回退到 `0x1000` 的 `BATTERY_STATUS`。找到电池功能后，HID 访问错误会直接终止读取。探测阶段某个接口出错时会跳过它，只有其他接口都没找到鼠标、也没有报告离线时，才返回该错误。如果两个功能都未返回电池状态，命令会报错，不会将读取失败显示为 `0%`。
 
 ## 许可证
 

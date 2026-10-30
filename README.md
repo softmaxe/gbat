@@ -94,8 +94,8 @@ Settings, then run `Logitech Mouse Battery`.
 </p>
 
 The script checks `PATH`, `/opt/homebrew/bin`, `/usr/local/bin`,
-`$HOME/.local/bin`, and the repository's `target/release` and root directories,
-in that order.
+`$HOME/.local/bin`, and the repository's `target/release` directory, in that
+order.
 
 For a custom binary path, add this line to `mouse-battery.sh` before
 `set -euo pipefail`:
@@ -106,10 +106,8 @@ export GBAT_BINARY="/path/to/gbat"
 
 Setting this variable in Terminal only affects scripts launched from that shell.
 
-Explicit paths take priority over the search above. The script checks
-`GBAT_BINARY`, then the legacy variables `GPWBAT_BINARY` and
-`GPW2_BATTERY_BINARY`, and uses the first non-empty value. That path must point
-to an executable file.
+`GBAT_BINARY` takes priority over the search above and must point to an
+executable file.
 
 ## Build from source
 
@@ -163,10 +161,9 @@ headset. There is no device selector.
 
 It reads `UNIFIED_BATTERY` at `0x1004` and falls back to `BATTERY_STATUS` at
 `0x1000` when the unified feature is unavailable, does not answer, or returns an
-incomplete response. Once a battery feature is found, HID access errors and
-incomplete writes stop the read. During discovery, an interface that fails is
-skipped; its error is reported only if no other interface finds the mouse or
-reports it offline.
+incomplete response. Once a battery feature is found, HID access errors stop the
+read. During discovery, an interface that fails is skipped; its error is
+reported only if no other interface finds the mouse or reports it offline.
 If neither feature yields a battery status, the command reports an error
 instead of inventing a `0%` reading.
 

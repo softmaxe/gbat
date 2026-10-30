@@ -42,10 +42,6 @@ pub struct BatteryStatus {
 #[derive(Debug)]
 pub enum HidppError {
     Hid(HidError),
-    ShortWrite {
-        expected: usize,
-        actual: usize,
-    },
     /// A reply matched the request but is too short to decode. `match_report`
     /// already checked the report ID, device index, feature index, and function
     /// byte, and turned error reports into their own outcomes.
@@ -59,10 +55,6 @@ impl fmt::Display for HidppError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Hid(error) => write!(formatter, "HID access failed: {error}"),
-            Self::ShortWrite { expected, actual } => write!(
-                formatter,
-                "short HID++ write: expected {expected} bytes, wrote {actual}"
-            ),
             Self::ShortResponse { minimum, actual } => write!(
                 formatter,
                 "short HID++ response: expected at least {minimum} bytes, got {actual}"
@@ -141,14 +133,16 @@ enum BatteryFeature {
 
 /// Report I/O and the monotonic timeline used by a request.
 trait RequestIo {
-    fn write(&self, report: &[u8]) -> Result<usize, HidError>;
+    fn write(&self, report: &[u8]) -> Result<(), HidError>;
     fn read_timeout(&self, buffer: &mut [u8], timeout_ms: i32) -> Result<usize, HidError>;
     fn now(&self) -> Instant;
 }
 
 impl RequestIo for HidDevice {
-    fn write(&self, report: &[u8]) -> Result<usize, HidError> {
-        HidDevice::write(self, report)
+    // hidapi's macOS backend writes a report whole or fails, so the returned
+    // byte count carries no information.
+    fn write(&self, report: &[u8]) -> Result<(), HidError> {
+        HidDevice::write(self, report).map(drop)
     }
 
     fn read_timeout(&self, buffer: &mut [u8], timeout_ms: i32) -> Result<usize, HidError> {
@@ -206,17 +200,6 @@ fn request_timeout(io: &impl RequestIo, deadline: Instant) -> Duration {
         .min(RESPONSE_TIMEOUT)
 }
 
-fn send_short(io: &impl RequestIo, report: [u8; 7]) -> Result<(), HidppError> {
-    let actual = io.write(&report)?;
-    if actual != report.len() {
-        return Err(HidppError::ShortWrite {
-            expected: report.len(),
-            actual,
-        });
-    }
-    Ok(())
-}
-
 /// The reply `report` gives to the request, or `None` if it answers something
 /// else. A HID++ 2.0 reply echoes the request's function and software ID, so
 /// matching that byte too rejects stale reports and replies meant for another
@@ -271,18 +254,15 @@ impl<Io: RequestIo> Device<'_, Io> {
     ) -> Result<Reply, HidppError> {
         let function_byte = (function << 4) | SW_ID;
         flush(self.io)?;
-        send_short(
-            self.io,
-            [
-                REPORT_ID_SHORT,
-                self.index,
-                feature_index,
-                function_byte,
-                payload[0],
-                payload[1],
-                payload[2],
-            ],
-        )?;
+        self.io.write(&[
+            REPORT_ID_SHORT,
+            self.index,
+            feature_index,
+            function_byte,
+            payload[0],
+            payload[1],
+            payload[2],
+        ])?;
 
         let deadline = self.io.now() + timeout;
         loop {
@@ -377,9 +357,7 @@ impl<Io: RequestIo> Device<'_, Io> {
             Err(error @ HidppError::ShortResponse { .. }) => match query_legacy() {
                 Ok(Some(status)) => Ok(Some(status)),
                 Ok(None) | Err(HidppError::ShortResponse { .. }) => Err(error),
-                Err(legacy_error @ (HidppError::Hid(_) | HidppError::ShortWrite { .. })) => {
-                    Err(legacy_error)
-                }
+                Err(legacy_error @ HidppError::Hid(_)) => Err(legacy_error),
             },
             Err(error) => Err(error),
         }
@@ -401,18 +379,12 @@ fn candidate_interfaces(api: &HidApi) -> Vec<&hidapi::DeviceInfo> {
     candidates
 }
 
-fn open_interface(api: &HidApi, info: &hidapi::DeviceInfo) -> Result<HidDevice, HidppError> {
-    let interface = api.open_path(info.path())?;
-    interface.set_blocking_mode(false)?;
-    Ok(interface)
-}
-
 /// Read the battery status through the first candidate HID interface and
 /// device index that expose a battery feature.
 pub fn read_battery(api: &HidApi) -> Result<Reading, HidppError> {
     let interfaces = candidate_interfaces(api)
         .into_iter()
-        .map(|info| move || open_interface(api, info));
+        .map(|info| move || api.open_path(info.path()).map_err(HidppError::Hid));
     read_battery_from(interfaces, Instant::now)
 }
 
@@ -552,7 +524,7 @@ mod tests {
         },
         Write {
             report: Vec<u8>,
-            result: Result<usize, HidError>,
+            result: Result<(), HidError>,
             advance: Duration,
         },
     }
@@ -574,7 +546,7 @@ mod tests {
         fn write(report: &[u8]) -> Self {
             Self::Write {
                 report: report.to_vec(),
-                result: Ok(report.len()),
+                result: Ok(()),
                 advance: Duration::ZERO,
             }
         }
@@ -651,7 +623,7 @@ mod tests {
     }
 
     impl RequestIo for ScriptedIo {
-        fn write(&self, report: &[u8]) -> Result<usize, HidError> {
+        fn write(&self, report: &[u8]) -> Result<(), HidError> {
             let ScriptStep::Write {
                 report: expected,
                 result,
@@ -1259,17 +1231,11 @@ mod tests {
         enum IoFailure {
             FlushRead,
             Write,
-            ShortWrite,
             ResponseRead,
         }
 
         impl IoFailure {
-            const ALL: [Self; 4] = [
-                Self::FlushRead,
-                Self::Write,
-                Self::ShortWrite,
-                Self::ResponseRead,
-            ];
+            const ALL: [Self; 3] = [Self::FlushRead, Self::Write, Self::ResponseRead];
 
             /// The script for `request` up to and including this failure.
             fn steps(self, request: &[u8]) -> Vec<ScriptStep> {
@@ -1278,37 +1244,25 @@ mod tests {
                     result: Err(HidError::InitializationError),
                     advance: Duration::ZERO,
                 };
-                let write = |result| ScriptStep::Write {
-                    report: request.to_vec(),
-                    result,
-                    advance: Duration::ZERO,
-                };
                 match self {
                     Self::FlushRead => vec![failed_read(0)],
                     Self::Write => vec![
                         ScriptStep::flush(&[]),
-                        write(Err(HidError::InitializationError)),
+                        ScriptStep::Write {
+                            report: request.to_vec(),
+                            result: Err(HidError::InitializationError),
+                            advance: Duration::ZERO,
+                        },
                     ],
-                    Self::ShortWrite => vec![ScriptStep::flush(&[]), write(Ok(3))],
                     Self::ResponseRead => exchange(request, [failed_read(1_500)]),
                 }
             }
 
             fn assert_error(self, result: Result<Reading, HidppError>) {
-                match (self, result) {
-                    (
-                        Self::ShortWrite,
-                        Err(HidppError::ShortWrite {
-                            expected: 7,
-                            actual: 3,
-                        }),
-                    )
-                    | (
-                        Self::FlushRead | Self::Write | Self::ResponseRead,
-                        Err(HidppError::Hid(HidError::InitializationError)),
-                    ) => {}
-                    (failure, result) => panic!("{failure:?} produced {result:?}"),
-                }
+                assert!(
+                    matches!(result, Err(HidppError::Hid(HidError::InitializationError))),
+                    "{self:?} produced {result:?}"
+                );
             }
         }
 
