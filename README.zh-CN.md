@@ -77,7 +77,7 @@ gbat
   <img src="assets/raycast-demo.webp" alt="gbat Raycast Script Command 演示" width="700">
 </p>
 
-脚本依次检查 `PATH`、`/opt/homebrew/bin`、`/usr/local/bin`、`$HOME/.local/bin`，以及仓库的 `target/release` 目录和根目录。
+脚本依次检查 `PATH`、`/opt/homebrew/bin`、`/usr/local/bin`、`$HOME/.local/bin`，以及仓库的 `target/release` 目录。
 
 如果可执行文件位于其他位置，在 `mouse-battery.sh` 的 `set -euo pipefail` 之前加入：
 
@@ -87,7 +87,7 @@ export GBAT_BINARY="/path/to/gbat"
 
 在 Terminal 中设置这个变量，只会影响从该 Shell 启动的脚本。
 
-指定路径的优先级高于上述搜索。脚本依次检查 `GBAT_BINARY`、旧变量 `GPWBAT_BINARY` 和 `GPW2_BATTERY_BINARY`，使用第一个非空值。该路径必须指向可执行文件。
+`GBAT_BINARY` 的优先级高于上述搜索，且必须指向可执行文件。
 
 ## 从源码构建
 

@@ -94,8 +94,8 @@ Settings, then run `Logitech Mouse Battery`.
 </p>
 
 The script checks `PATH`, `/opt/homebrew/bin`, `/usr/local/bin`,
-`$HOME/.local/bin`, and the repository's `target/release` and root directories,
-in that order.
+`$HOME/.local/bin`, and the repository's `target/release` directory, in that
+order.
 
 For a custom binary path, add this line to `mouse-battery.sh` before
 `set -euo pipefail`:
@@ -106,10 +106,8 @@ export GBAT_BINARY="/path/to/gbat"
 
 Setting this variable in Terminal only affects scripts launched from that shell.
 
-Explicit paths take priority over the search above. The script checks
-`GBAT_BINARY`, then the legacy variables `GPWBAT_BINARY` and
-`GPW2_BATTERY_BINARY`, and uses the first non-empty value. That path must point
-to an executable file.
+`GBAT_BINARY` takes priority over the search above and must point to an
+executable file.
 
 ## Build from source
 
