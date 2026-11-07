@@ -4,8 +4,13 @@ on:
   push:
     tags:
       - "v*.*.*"
-  # Manual runs build and upload the archive as a workflow artifact only.
+  # Manual runs build an archive, or retest a published release's formula.
   workflow_dispatch:
+    inputs:
+      formula_tag:
+        description: "Existing release tag to retest the Homebrew formula (empty to build only)"
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -21,6 +26,7 @@ env:
 jobs:
   build:
     name: Build aarch64-apple-darwin
+    if: inputs.formula_tag == ''
     # macos-15 is arm64; release archives remain macOS-only. Linux is built from source.
     runs-on: macos-15
     timeout-minutes: 30
@@ -140,17 +146,44 @@ jobs:
 
   formula-test:
     name: Test formula on arm64
-    if: github.event_name == 'push'
+    if: >-
+      always() && !cancelled() &&
+      ((github.event_name == 'push' && needs.release.result == 'success') ||
+      (github.event_name == 'workflow_dispatch' && inputs.formula_tag != ''))
     needs:
       - build
       - release
     runs-on: macos-15
     timeout-minutes: 20
+    permissions:
+      contents: read
+      attestations: read
     env:
-      TAG: ${{ needs.build.outputs.tag }}
+      TAG: ${{ needs.build.outputs.tag || inputs.formula_tag }}
       VERSION: ${{ needs.build.outputs.version }}
       SHA256: ${{ needs.build.outputs.sha256 }}
     steps:
+      - name: Verify published release for formula retest
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "Invalid release tag: $TAG" >&2
+            exit 1
+          }
+          version="${TAG#v}"
+          archive="gbat-$TAG-aarch64-apple-darwin.tar.gz"
+          release_dir="$RUNNER_TEMP/published-release"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$archive" --pattern "$archive.sha256" --dir "$release_dir"
+          (cd "$release_dir" && shasum -a 256 -c "$archive.sha256")
+          gh attestation verify "$release_dir/$archive" --repo "$GITHUB_REPOSITORY" \
+            --source-ref "refs/tags/$TAG"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "SHA256=$(shasum -a 256 "$release_dir/$archive" | awk '{ print $1 }')" >> "$GITHUB_ENV"
+
       - name: Generate formula
         run: |
           set -euo pipefail
@@ -190,6 +223,7 @@ jobs:
           brew tap-new softmaxe/release-test
           install -m 0644 "$RUNNER_TEMP/gbat.rb" "$(brew --repository softmaxe/release-test)/Formula/gbat.rb"
 
+          brew trust --formula softmaxe/release-test/gbat
           brew audit --strict softmaxe/release-test/gbat
           brew install softmaxe/release-test/gbat
           brew test softmaxe/release-test/gbat
