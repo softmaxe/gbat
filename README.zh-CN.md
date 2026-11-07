@@ -9,7 +9,8 @@
   <a href="README.zh-CN.md"><kbd>简体中文</kbd></a>
 </p>
 
-`gbat` 在 macOS 上读取 Logitech G Pro Wireless 2 鼠标的电量和充电状态，输出一行结果后退出。
+`gbat` reads Logitech G Pro Wireless 2 battery status on macOS and Linux, prints
+one line, and exits.
 
 ```text
 Battery: 78%
@@ -20,11 +21,16 @@ Battery: 42% (charging)
 
 ## 系统要求
 
-- macOS 11 Big Sur 或更高版本
+- macOS 11 Big Sur or later, or Linux with hidraw and udev
 - 通过 LIGHTSPEED 接收器或 USB 连接的 Logitech G Pro Wireless 2
 - 运行 `gbat` 时鼠标处于唤醒状态
 
 ## 安装
+
+On Linux, build the CLI from source and
+[run battery queries with sudo](README.md#linux-and-sudo).
+Linux builds do not require `libudev-dev` or a separately installed HIDAPI library.
+Homebrew packages, release archives, and Raycast integration remain macOS-only.
 
 Homebrew 软件包和 GitHub Release 归档仅提供 Apple Silicon 的 `arm64` 可执行文件。
 
@@ -56,8 +62,17 @@ Release 可执行文件没有 Apple Developer ID 签名，也未经过 Apple 公
 通过 LIGHTSPEED 接收器或 USB 连接鼠标，然后运行：
 
 ```sh
+# macOS
 gbat
+# Linux
+sudo /path/to/gbat
 ```
+
+Linux normally restricts `/dev/hidraw*` to root. Battery reads require read/write
+access to send a HID++ query and receive its reply. Run the binary with `sudo`
+for each battery query; `gbat --version` works without `sudo`. The CLI does not
+install udev rules or change device permissions. See
+[Linux and sudo](README.md#linux-and-sudo) for details.
 
 成功时，命令向 stdout 输出一行电池状态，退出码为 `0`。失败时，命令向 stderr 输出错误，退出码为 `1`。运行 `gbat --version` 可查看已安装的版本，不会访问鼠标。
 
@@ -97,7 +112,10 @@ export GBAT_BINARY="/path/to/gbat"
 git clone https://github.com/softmaxe/gbat.git
 cd gbat
 cargo build --release --locked
+# macOS
 ./target/release/gbat
+# Linux
+sudo ./target/release/gbat
 ```
 
 如需将可执行文件保存在构建目录之外：
@@ -109,6 +127,8 @@ cp target/release/gbat "$HOME/.local/bin/gbat"
 
 确认 `$HOME/.local/bin` 已加入 `PATH`，即可在任意目录运行 `gbat`。
 
+On Linux, run `sudo "$HOME/.local/bin/gbat"`; `sudo` may use a different `PATH`.
+
 ## 故障排查
 
 | 问题 | 处理方法 |
@@ -116,7 +136,8 @@ cp target/release/gbat "$HOME/.local/bin/gbat"
 | `No responsive Logitech HID++ interface found` | 连接接收器或 USB 线，唤醒鼠标后重试。 |
 | `The receiver reports no connected mouse` | 鼠标已离线。打开鼠标电源或移动鼠标后重试。 |
 | `Could not read battery level` | 鼠标可能在读取时离线，或返回了无法使用的电池响应。移动鼠标后重试。 |
-| `Could not initialize HID access` 或 `Could not read battery level: HID access failed` | 从 Terminal 运行一次 `gbat`，并允许 macOS 弹出的权限请求。通常不需要 `sudo`。 |
+| HID access errors on macOS | Run `gbat` from Terminal and approve any macOS permission prompt. `sudo` is not normally required on macOS. |
+| `Permission denied (os error 13)` on Linux | Run `sudo /path/to/gbat`; see [Linux and sudo](README.md#linux-and-sudo). |
 | Raycast 提示 `gbat binary not found` | 安装或构建 `gbat`，或在脚本中将 `GBAT_BINARY` 设为它的可执行文件路径。 |
 | `Battery: 100%` 但没有 `(charging)` | 鼠标充满后可能停止主动充电，这是正常现象。 |
 | macOS 阻止运行 | 打开 System Settings > Privacy & Security，为 `gbat` 选择 Open Anyway。 |
