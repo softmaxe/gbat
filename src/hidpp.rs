@@ -54,7 +54,17 @@ pub enum HidppError {
 impl fmt::Display for HidppError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Hid(error) => write!(formatter, "HID access failed: {error}"),
+            Self::Hid(error) => {
+                write!(formatter, "HID access failed: {error}")?;
+                #[cfg(target_os = "linux")]
+                if permission_denied(error) {
+                    write!(
+                        formatter,
+                        ". On Linux, read battery status with sudo: sudo /path/to/gbat."
+                    )?;
+                }
+                Ok(())
+            }
             Self::ShortResponse { minimum, actual } => write!(
                 formatter,
                 "short HID++ response: expected at least {minimum} bytes, got {actual}"
@@ -68,6 +78,16 @@ impl std::error::Error for HidppError {}
 impl From<HidError> for HidppError {
     fn from(error: HidError) -> Self {
         Self::Hid(error)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn permission_denied(error: &HidError) -> bool {
+    match error {
+        HidError::IoError { error } => error.kind() == std::io::ErrorKind::PermissionDenied,
+        // hidapi's native backend wraps open errors in text, but preserves errno.
+        HidError::HidApiError { message } => message.ends_with("(os error 13)"),
+        _ => false,
     }
 }
 
@@ -139,10 +159,15 @@ trait RequestIo {
 }
 
 impl RequestIo for HidDevice {
-    // hidapi's macOS backend writes a report whole or fails, so the returned
-    // byte count carries no information.
     fn write(&self, report: &[u8]) -> Result<(), HidError> {
-        HidDevice::write(self, report).map(drop)
+        let sent = HidDevice::write(self, report)?;
+        if sent != report.len() {
+            return Err(HidError::IncompleteSendError {
+                sent,
+                all: report.len(),
+            });
+        }
+        Ok(())
     }
 
     fn read_timeout(&self, buffer: &mut [u8], timeout_ms: i32) -> Result<usize, HidError> {
@@ -376,6 +401,10 @@ fn candidate_interfaces(api: &HidApi) -> Vec<&hidapi::DeviceInfo> {
             .then_with(|| left.interface_number().cmp(&right.interface_number()))
             .then_with(|| left.path().to_bytes().cmp(right.path().to_bytes()))
     });
+    // Linux can enumerate several HID++ usages for the same hidraw node.
+    // Opening it once is enough to receive every report on that interface.
+    #[cfg(target_os = "linux")]
+    candidates.dedup_by(|left, right| left.path() == right.path());
     candidates
 }
 
@@ -472,6 +501,31 @@ mod tests {
     use std::rc::Rc;
 
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_permission_errors_explain_device_access_setup() {
+        for error in [
+            HidError::IoError {
+                error: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            },
+            HidError::HidApiError {
+                message: String::from(
+                    "failed to open device with path /dev/hidraw4: Permission denied (os error 13)",
+                ),
+            },
+        ] {
+            let message = HidppError::Hid(error).to_string();
+            assert!(message.contains("sudo /path/to/gbat"), "{message}");
+        }
+        let message = HidppError::Hid(HidError::HidApiError {
+            message: String::from(
+                "failed to open device with path /dev/hidraw4: No such file or directory (os error 2)",
+            ),
+        })
+        .to_string();
+        assert!(!message.contains("sudo /path/to/gbat"), "{message}");
+    }
 
     const UNIFIED_LOOKUP: [u8; 7] = unified_lookup(1);
     const LEGACY_LOOKUP: [u8; 7] = [REPORT_ID_SHORT, 1, 0, 0x0F, 0x10, 0x00, 0];

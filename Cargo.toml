@@ -2,13 +2,16 @@
 name = "gbat"
 version = "0.0.1"
 edition = "2021"
-description = "Read Logitech GPW2 battery status on macOS"
+description = "Read Logitech GPW2 battery status on macOS and Linux"
 license = "AGPL-3.0-only"
 repository = "https://github.com/softmaxe/gbat"
 homepage = "https://github.com/softmaxe/gbat"
 
-[dependencies]
+[target.'cfg(not(target_os = "linux"))'.dependencies]
 hidapi = { version = "2.6.7", features = ["macos-shared-device"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+hidapi = { version = "2.6.7", default-features = false, features = ["linux-native-basic-udev"] }
 
 # A one-shot CLI only pays for what it pages in, so trade build time for a
 # smaller binary: whole-program inlining, no unwinding tables, no symbols. This
