@@ -21,7 +21,7 @@ env:
 jobs:
   build:
     name: Build aarch64-apple-darwin
-    # macos-15 is arm64, so a native build produces the only target gbat ships.
+    # macos-15 is arm64; release archives remain macOS-only. Linux is built from source.
     runs-on: macos-15
     timeout-minutes: 30
     env:
