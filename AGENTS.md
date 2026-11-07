@@ -4,7 +4,7 @@ For an authorized PR merge, wait for the checks required by the current GitHub b
 
 Once those requirements are satisfied, proceed with the merge while optional checks such as CodeQL continue asynchronously. Report optional checks that are still pending as pending, and investigate any known failures or security findings rather than describing the entire CI run as successful. Wait for all checks when the user explicitly requests that scope.
 
-Keep PR validation in a single macOS job running formatting, Clippy, and tests. Keep CodeQL enabled as an asynchronous check; add caching or parallel jobs only when measured runtime justifies their overhead.
+Validate PRs natively on macOS and Linux so platform-specific code and HID backends are checked. Keep Clippy and tests together in each platform job, run formatting once, and preserve `Check` as the required aggregate gate that passes only when both platforms succeed. Keep CodeQL enabled as an asynchronous check; add caching or further job splitting only when measured runtime justifies their overhead.
 
 ## Versioning
 

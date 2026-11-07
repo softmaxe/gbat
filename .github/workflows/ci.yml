@@ -17,10 +17,13 @@ env:
   MACOSX_DEPLOYMENT_TARGET: "11.0"
 
 jobs:
-  check:
-    name: Check
-    # macos-15 is arm64, so the host target is the only one gbat ships.
-    runs-on: macos-15
+  validate:
+    name: Validate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
       - name: Check out source
@@ -30,6 +33,7 @@ jobs:
 
       # rustup installs the toolchain pinned in rust-toolchain.toml on first use.
       - name: Format
+        if: runner.os == 'macOS'
         run: cargo fmt --check
 
       - name: Lint
@@ -37,3 +41,26 @@ jobs:
 
       - name: Test
         run: cargo test --locked
+
+      # Linux is installed from source; verify linking and startup without HID access.
+      - name: Build and smoke-test Linux CLI
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          cargo build --release --locked
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
+          test -n "$version"
+          test "$(./target/release/gbat --version)" = "gbat $version"
+
+  check:
+    name: Check
+    # Keep the existing required check, and fail even if validation was skipped.
+    if: always()
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require both platforms to pass
+        env:
+          VALIDATION_RESULT: ${{ needs.validate.result }}
+        run: test "$VALIDATION_RESULT" = success
