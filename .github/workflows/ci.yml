@@ -48,9 +48,9 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --release --locked
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)"
-          test -n "$version"
-          test "$(./target/release/gbat --version)" = "gbat $version"
+          version="$(cargo metadata --locked --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "gbat") | .version')"
+          reported_version="$(./target/release/gbat --version)"
+          test "$reported_version" = "gbat $version"
 
   check:
     name: Check

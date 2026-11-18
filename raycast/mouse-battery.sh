@@ -9,30 +9,24 @@
 
 set -euo pipefail
 
-script_dir="${0:A:h}"
-project_dir="${script_dir:h}"
-
 if [[ -n "${GBAT_BINARY:-}" ]]; then
-  binary_path="$GBAT_BINARY"
-elif binary_path="$(command -v gbat 2>/dev/null)" && [[ -x "$binary_path" ]]; then
-  :
+  candidates=("$GBAT_BINARY")
 else
-  binary_path=""
-  for candidate in \
-    "/opt/homebrew/bin/gbat" \
-    "/usr/local/bin/gbat" \
-    "$HOME/.local/bin/gbat" \
-    "$project_dir/target/release/gbat"; do
-    if [[ -x "$candidate" ]]; then
-      binary_path="$candidate"
-      break
-    fi
-  done
+  candidates=(
+    "${commands[gbat]:-}"
+    /opt/homebrew/bin/gbat
+    /usr/local/bin/gbat
+    "$HOME/.local/bin/gbat"
+    "${0:A:h:h}/target/release/gbat"
+  )
 fi
 
-if [[ -z "$binary_path" || ! -x "$binary_path" ]]; then
-  print -u2 "gbat binary not found. Build it with: cargo build --release"
-  exit 1
-fi
+for candidate in "${candidates[@]}"; do
+  if [[ -f "$candidate" && -x "$candidate" ]]; then
+    [[ "$candidate" == */* ]] || candidate="./$candidate"
+    exec "$candidate"
+  fi
+done
 
-exec "$binary_path"
+print -u2 "gbat binary not found. Build it with: cargo build --release"
+exit 1
