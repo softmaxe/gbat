@@ -1,10 +1,10 @@
 version: 2
+# Give new releases a week to age before opening routine update PRs.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: monthly
-    # Let new releases age before adopting them, so a compromised version is likely yanked first.
     cooldown:
       default-days: 7
     groups:
@@ -17,7 +17,6 @@ updates:
     directory: /
     schedule:
       interval: monthly
-    # Let new releases age before adopting them, so a compromised version is likely yanked first.
     cooldown:
       default-days: 7
     groups:
