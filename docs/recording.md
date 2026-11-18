@@ -1,24 +1,13 @@
 # README recordings
 
-The terminal animation was captured on October 13, 2026, on macOS 27.0.1 with a
-connected Logitech mouse. Its battery readings are live output.
-The Raycast animation is the original GitHub asset and is kept unchanged.
-
-| Asset | Captured version | Source |
+| Asset | Capture | Visible output |
 | --- | --- | --- |
-| [`demo.gif`](../assets/demo.gif) | `gbat 0.0.1` | Local release build of `0.0.1` |
-| [`raycast-demo.webp`](../assets/raycast-demo.webp) | Original capture; software versions not recorded | Original GitHub asset, retained unchanged |
-
-The terminal demo shows the binary's own `--version` output and `Battery: 61%`.
-A later terminal recording may show a different level or charging state.
-The original Raycast animation shows the `Logitech Mouse Battery` command and
-`Battery: 86%`. It demonstrates the workflow without identifying a gbat release.
-
-The logo is static artwork. It contains no software version.
+| [`demo.gif`](../assets/demo.gif) | Local release build on macOS 27.0.1, October 13, 2026, with a connected Logitech mouse | `gbat 0.0.1` and `Battery: 61%` |
+| [`raycast-demo.webp`](../assets/raycast-demo.webp) | Original GitHub asset. Software versions were not recorded. | `Logitech Mouse Battery` and `Battery: 86%` |
 
 ## Record the terminal demo
 
-Install Rust and the recording tools, connect the mouse, and keep it awake:
+On macOS, install Rust and the recording tools, connect the mouse, and keep it awake:
 
 ```sh
 brew install vhs ffmpeg ttyd
@@ -30,30 +19,20 @@ The script builds with `--locked`, verifies a real battery read, and records
 sets `GBAT_BINARY` to that same build, so all four commands use it. There is no
 sample-output wrapper.
 
-The recorder renders to a temporary GIF and checks that FFmpeg can decode it
-before replacing `assets/demo.gif`. Temporary files are removed on exit.
+The recorder passes a temporary output path to VHS and checks that FFmpeg can
+decode the entire GIF before moving it to `assets/demo.gif`.
 
 Use VHS `0.12.1` or later: `0.12.0` can exit successfully without rendering,
 which leaves the existing GIF untouched.
 
 The checked-in capture used VHS `0.12.1`, ttyd `1.7.7`, and FFmpeg `9.0.2`.
 
-## Preserve the original Raycast animation
-
-Keep `assets/raycast-demo.webp` byte-for-byte identical to the original GitHub
-asset as it was committed. Do not re-record,
-re-encode, or replace it during gbat version updates or README drift checks.
-Only change it when the user explicitly requests a replacement.
-
-The terminal recorder updates only `assets/demo.gif`. Its release version and
-recording date do not apply to the Raycast animation.
-
 ## Check before updating the README
 
 - Open the terminal animation and check its version, battery output, and
   readability. A successful recorder exit alone is not enough.
-- Verify that the original Raycast animation remains unchanged.
+- Preserve the original Raycast animation byte-for-byte during terminal demo
+  and release updates. Replace it only when explicitly requested.
 - Check every relative link and image reference in both README files.
-- Update the terminal capture's version and tool versions here and its captions
-  in both README files together. Keep the binary version tied to `Cargo.toml`
-  and the intended release; do not change it to match an older recording.
+- Record the capture date, CLI version, observed output, and tool versions here.
+  Both README captions link to this file.

@@ -22,7 +22,7 @@ G HUB, Python, or a background process.
 
 ## Requirements
 
-- macOS 11 Big Sur or later, or Linux with hidraw and udev
+- macOS 11 Big Sur or later, or Linux with hidraw and sysfs
 - A Logitech G Pro Wireless 2 connected through its LIGHTSPEED receiver or USB
 - A mouse that is awake when `gbat` runs
 
@@ -85,9 +85,8 @@ reports that the mouse is offline, turn it on or move it, then retry.
   <img src="assets/demo.gif" alt="gbat version, battery output, and Raycast script demo" width="700">
 </p>
 
-This terminal demo shows real battery readings from `gbat 0.0.1`. It is a
-historical recording, so its version may differ from the current release.
-See [recording details](docs/recording.md) for its source and update instructions.
+The demo shows a real battery reading. See the [recording details](docs/recording.md)
+for the captured version and instructions for recording a new demo.
 
 ## Raycast
 
@@ -147,12 +146,6 @@ On Linux, use `sudo "$HOME/.local/bin/gbat"`; `sudo` may use a different `PATH`.
 
 ### Linux and sudo
 
-Use `sudo` for battery queries on Linux:
-
-```sh
-sudo ./target/release/gbat
-```
-
 Linux exposes the receiver and mouse through `/dev/hidraw*`. These device nodes
 are normally accessible only to root. Reading battery status requires opening
 the appropriate node for both reading and writing: `gbat` sends a HID++ battery
@@ -191,21 +184,19 @@ xattr -dr com.apple.quarantine "$(brew --prefix gbat)"
 
 ## How it works
 
-`gbat` opens Logitech HID++ interfaces in shared mode on macOS and through hidraw
-on Linux. It checks receiver device
-indices `1` through `6` and the direct USB index `0xFF`, trying `1` and `0xFF`
-first. It uses the first interface and device index that reports a supported
-battery feature. It filters only by Logitech's vendor ID, so with several
-Logitech HID++ devices connected it may read another mouse, keyboard, or
-headset. There is no device selector.
+`gbat` selects interfaces with Logitech's vendor ID and HID++ usage page
+`0xFF00`. It opens them in shared mode on macOS and through hidraw on Linux.
+It probes each interface at receiver index `1`, then at direct USB index
+`0xFF`, then at receiver indices `2` through `6`. The first device that
+reports a supported battery feature supplies the reading. There is no device
+selector, so the reading can come from another mouse, keyboard, or headset.
 
-It reads `UNIFIED_BATTERY` at `0x1004` and falls back to `BATTERY_STATUS` at
-`0x1000` when the unified feature is unavailable, does not answer, or returns an
-incomplete response. Once a battery feature is found, HID access errors stop the
-read. During discovery, an interface that fails is skipped; its error is
-reported only if no other interface finds the mouse or reports it offline.
-If neither feature yields a battery status, the command reports an error
-instead of inventing a `0%` reading.
+During discovery, a silent `UNIFIED_BATTERY` (`0x1004`) lookup skips that
+interface and index. If the device answers that the feature is unsupported,
+`gbat` looks up `BATTERY_STATUS` (`0x1000`). It also tries the legacy feature
+when a discovered unified feature yields no usable status. A HID access error
+during a status read ends the query. Discovery errors are reported only if
+no candidate exposes a battery feature or reports the mouse offline.
 
 ## License
 
