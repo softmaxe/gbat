@@ -15,8 +15,11 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
+    match read_status() {
+        Ok(status) => {
+            println!("{}", format_status(status));
+            ExitCode::SUCCESS
+        }
         Err(message) => {
             eprintln!("{message}");
             ExitCode::FAILURE
@@ -24,16 +27,11 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<(), String> {
+fn read_status() -> Result<BatteryStatus, String> {
     let api = HidApi::new().map_err(|error| format!("Could not initialize HID access: {error}"))?;
     let reading =
         read_battery(&api).map_err(|error| format!("Could not read battery level: {error}"))?;
 
-    println!("{}", format_status(battery_status(reading)?));
-    Ok(())
-}
-
-fn battery_status(reading: Reading) -> Result<BatteryStatus, String> {
     match reading {
         Reading::Status(status) => Ok(status),
         Reading::NoStatus => Err(String::from(
