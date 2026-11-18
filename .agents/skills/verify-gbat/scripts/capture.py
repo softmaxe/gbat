@@ -1,18 +1,18 @@
 #!/usr/bin/env -S uv run --no-project --python 3.12
 """Capture a short-lived real command in a private PTY and retain its proof."""
 
-from __future__ import annotations
-
 import argparse
 import errno
 import hashlib
 import json
+import math
 import os
 import platform
 import pty
 import re
 import select
 import signal
+import stat
 import sys
 import time
 import tomllib
@@ -22,17 +22,22 @@ from types import FrameType
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def snapshot(directory: Path) -> dict[str, str]:
-    return {
-        str(path.relative_to(directory)): (
-            f"symlink:{os.readlink(path)}" if path.is_symlink() else digest(path)
-        )
-        for path in sorted(directory.rglob("*"))
-        if path.is_symlink() or path.is_file()
-    }
+    entries: dict[str, str] = {}
+    for path in sorted(directory.rglob("*")):
+        mode = path.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            value = f"symlink:{os.readlink(path)}"
+        elif stat.S_ISREG(mode):
+            value = digest(path)
+        else:
+            value = stat.filemode(mode)[0]
+        entries[str(path.relative_to(directory))] = value
+    return entries
 
 
 def write_json(path: Path, data: object) -> None:
@@ -135,12 +140,14 @@ def main() -> int:
     command: list[str] = args.command
     if command[:1] == ["--"]:
         command = command[1:]
-    if not command or args.timeout <= 0:
-        parser.error("Provide a command after -- and a positive timeout")
+    if not command or not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("Provide a command after -- and a finite positive timeout")
     cwd = args.cwd.resolve(strict=True)
     binary = args.binary.resolve(strict=True)
     evidence = args.evidence.resolve()
-    if evidence == cwd or cwd in evidence.parents:
+    if not cwd.is_dir() or not binary.is_file():
+        parser.error("--cwd must be a directory and --binary must be a file")
+    if evidence.is_relative_to(cwd):
         parser.error("Evidence must be outside the scratch working directory")
     repo = Path(__file__).resolve().parents[4]
     version = tomllib.loads((repo / "Cargo.toml").read_text())["package"]["version"]
@@ -212,13 +219,14 @@ def main() -> int:
                 )
             )
         )
-    after = snapshot(cwd)
-    passed = bool(
+    after = snapshot(cwd) if cwd.is_dir() and not cwd.is_symlink() else None
+    scratch_unchanged = before == after
+    passed = (
         matched
         and not timed_out
         and not interrupted
-        and not capture_error
-        and before == after
+        and capture_error is None
+        and scratch_unchanged
     )
     result = {
         "feature": args.feature,
@@ -226,8 +234,8 @@ def main() -> int:
         "timed_out": timed_out,
         "interrupted": interrupted,
         "capture_error": capture_error,
-        "expectation_matched": bool(matched),
-        "scratch_unchanged": before == after,
+        "expectation_matched": matched,
+        "scratch_unchanged": scratch_unchanged,
         "scratch_after": after,
         "passed": passed,
     }

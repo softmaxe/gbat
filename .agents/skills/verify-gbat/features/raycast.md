@@ -31,18 +31,19 @@ Preconditions:
   Require valid battery stdout, empty stderr and app exit `0`.
 - **Automatic discovery entry.** Run
   `uv run --no-project --python 3.12 "$HARNESS" --evidence "$EVIDENCE/raycast-discovery" --cwd "$SCRATCH" --binary "$BINARY" --feature raycast-discovery --expect battery -- env -u GBAT_BINARY PATH="$REPO/target/release:$PATH" "$REPO/raycast/mouse-battery.sh"`.
-  This proves the PATH entry with this checkout's build. Search order after PATH
-  is `/opt/homebrew/bin/gbat`, `/usr/local/bin/gbat`, `$HOME/.local/bin/gbat`, then
-  the repository's `target/release/gbat`. When modifying fallback discovery,
-  exercise each affected location on an appropriately configured host; do not
-  overwrite installed binaries or claim all fallbacks from the PATH case.
+  This exercises the PATH entry with this checkout's build. When modifying
+  fallback discovery, exercise each affected location in the
+  [documented order](../../../../README.md#raycast) on an appropriately
+  configured host. Preserve the user's installed binaries.
 - **Missing configured executable.** Confirm `test ! -e "$SCRATCH/no-gbat"`.
   Run
   `uv run --no-project --python 3.12 "$HARNESS" --evidence "$EVIDENCE/raycast-missing" --cwd "$SCRATCH" --binary "$BINARY" --feature raycast-missing --expect missing-binary -- env GBAT_BINARY="$SCRATCH/no-gbat" "$REPO/raycast/mouse-battery.sh"`.
   Require app exit `1`, empty stdout and exact stderr
   `gbat binary not found. Build it with: cargo build --release` plus a newline.
-  A bad explicit override must not fall back to an installed binary. This case
-  requires no hardware and invokes the real script without a fake executable.
+  Repeat with `GBAT_BINARY="$SCRATCH"` and `raycast-directory` as the evidence
+  directory and feature. A searchable directory also has its execute bit set.
+  Both cases should reach the same missing-executable diagnostic even when
+  a working gbat is on PATH.
 - **Native UI entry.** Using available native-app control, open Raycast, search
   the exact command `Logitech Mouse Battery`, and execute it. Capture the action
   and visible compact battery result in `$EVIDENCE/raycast-ui/`, with connection
@@ -58,5 +59,3 @@ Preconditions:
 
 - The script ignores its arguments, including `--version`; it queries hardware.
 - Invalid `GBAT_BINARY` takes precedence even when a working gbat is on PATH.
-- Linux CLI support does not imply Raycast support; Linux cannot prove this map.
-- The original Raycast WebP is historical evidence, not proof of the current build.
